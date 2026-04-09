@@ -1,6 +1,6 @@
 # ADS-B Exchange Watchlist for Home Assistant
 
-`adsb_exchange` is a HACS-ready custom integration for tracking aircraft from an ADS-B Exchange-compatible feed and surfacing them in Home Assistant as:
+`adsb_exchange` is a HACS-ready custom integration for tracking aircraft from an ADS-B Exchange-compatible source and surfacing them in Home Assistant as:
 
 - one watchlist sensor with the current tracked aircraft list
 - one sensor per tracked aircraft identifier
@@ -33,7 +33,8 @@ Each tracked aircraft can expose:
 During config flow you can set:
 
 - `Tracked aircraft`: comma-separated tail numbers, ICAO hex codes, or callsigns
-- `Aircraft feed URL`: defaults to `https://globe.adsbexchange.com/data/aircraft.json`
+- `Aircraft feed URL`: defaults to `https://gateway.adsbexchange.com/api/aircraft/v2`
+- `ADS-B Exchange API key`: required when using the official ADS-B Exchange gateway
 - `Map URL`: defaults to `https://globe.adsbexchange.com/`
 - `Update interval`: polling interval in seconds
 - `Request timeout`: timeout for each refresh
@@ -43,6 +44,31 @@ Example tracked aircraft list:
 ```text
 N123AB, A1B2C3, UAL123
 ```
+
+## Supported data sources
+
+### Official ADS-B Exchange API
+
+Use:
+
+- `Aircraft feed URL`: `https://gateway.adsbexchange.com/api/aircraft/v2`
+- `ADS-B Exchange API key`: your ADS-B Exchange API key
+
+The integration will query:
+
+- `/hex` for ICAO hex lookups
+- `/registration` for tail number lookups
+- `/callsign/{callsign}` for callsign lookups
+
+### Local tar1090 / readsb feed
+
+If you run your own receiver, point `Aircraft feed URL` to a local or self-hosted `aircraft.json`, for example:
+
+```text
+http://your-host/data/aircraft.json
+```
+
+No API key is required for local feeds.
 
 ## Entities created
 
@@ -120,7 +146,7 @@ show_details: true
 
 ## Notes
 
-- The default data source targets the public globe feed path used by ADS-B Exchange's tar1090-style map. If that path changes, update the integration's `Aircraft feed URL`.
+- On April 9, 2026, the public globe feed URL `https://globe.adsbexchange.com/data/aircraft.json` returned HTTP 403 in direct server-side requests. The integration now treats that public feed as unsupported for backend polling.
 - The map card uses the configured map URL and ADS-B Exchange query parameters, so users can center the map on any region they want.
 - If you already run your own `tar1090` or other ADS-B Exchange-compatible feed, point `Aircraft feed URL` at that endpoint instead.
 - If the embedded ADS-B Exchange map is blocked by browser or remote framing policy, use the built-in Home Assistant map card with the generated `device_tracker` entities.

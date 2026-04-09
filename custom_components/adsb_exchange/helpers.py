@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+import re
 from typing import Any
 
 from homeassistant.util import slugify
@@ -42,6 +43,11 @@ def parse_tracked_aircraft(value: str | Iterable[str]) -> tuple[str, ...]:
 def identifier_slug(value: str) -> str:
     """Build a stable slug for an identifier."""
     return slugify(normalize_identifier(value))
+
+
+def is_hex_identifier(value: str) -> bool:
+    """Return True when the identifier looks like an ICAO hex code."""
+    return bool(re.fullmatch(r"[0-9A-F]{6}", normalize_identifier(value)))
 
 
 def coerce_float(value: Any) -> float | None:

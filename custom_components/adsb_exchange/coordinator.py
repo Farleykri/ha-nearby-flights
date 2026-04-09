@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import logging
 from typing import Any
+from urllib.parse import quote, urlsplit, urlunsplit
 
-from aiohttp import ClientError, ClientTimeout
+from aiohttp import ClientError, ClientResponseError, ClientTimeout
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -15,13 +17,17 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     ATTR_AIRCRAFT,
     ATTR_MATCHED_TARGETS,
+    BLOCKED_PUBLIC_FEED_URL,
+    CONF_API_KEY,
     CONF_DATA_URL,
     CONF_REQUEST_TIMEOUT,
     CONF_SCAN_INTERVAL,
     CONF_TRACKED_AIRCRAFT,
     DOMAIN,
+    OFFICIAL_API_BASE_PATH,
+    OFFICIAL_API_HOST,
 )
-from .helpers import aircraft_candidates, parse_tracked_aircraft, summarize_aircraft
+from .helpers import aircraft_candidates, is_hex_identifier, parse_tracked_aircraft, summarize_aircraft
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +53,7 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
         self._session = async_get_clientsession(hass)
         self._targets = parse_tracked_aircraft(self._config(CONF_TRACKED_AIRCRAFT))
         self._source_url = str(self._config(CONF_DATA_URL))
+        self._api_key = str(self._config(CONF_API_KEY) or "").strip()
         self._timeout = int(self._config(CONF_REQUEST_TIMEOUT))
 
         super().__init__(
@@ -71,6 +78,126 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
             return None
         return self.data.aircraft_by_target.get(target)
 
+    def _is_official_api_source(self) -> bool:
+        """Return True when the configured source is the official ADS-B Exchange API."""
+        parsed = urlsplit(self._source_url)
+        return parsed.netloc.lower() == OFFICIAL_API_HOST and parsed.path.startswith(
+            OFFICIAL_API_BASE_PATH
+        )
+
+    def _official_api_base_url(self) -> str:
+        """Normalize any official API URL to the base API path."""
+        parsed = urlsplit(self._source_url)
+        return urlunsplit((parsed.scheme, parsed.netloc, OFFICIAL_API_BASE_PATH, "", ""))
+
+    async def _async_api_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json_body: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Perform an authenticated request to the official ADS-B Exchange API."""
+        headers = {
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+        }
+        if self._api_key:
+            headers["x-api-key"] = self._api_key
+
+        try:
+            async with self._session.request(
+                method,
+                url,
+                json=json_body,
+                headers=headers,
+                timeout=ClientTimeout(total=self._timeout),
+            ) as response:
+                response.raise_for_status()
+                payload = await response.json(content_type=None)
+        except ClientResponseError as err:
+            if err.status in (402, 403):
+                raise UpdateFailed(
+                    "ADS-B Exchange API rejected the request. Verify the API key and subscription "
+                    f"for {self._official_api_base_url()}."
+                ) from err
+            if err.status == 429:
+                raise UpdateFailed(
+                    "ADS-B Exchange API rate limit exceeded. Increase the scan interval and try again."
+                ) from err
+            raise UpdateFailed(f"Unable to fetch ADS-B data: HTTP {err.status}") from err
+        except (ClientError, TimeoutError, ValueError) as err:
+            raise UpdateFailed(f"Unable to fetch ADS-B data: {err}") from err
+
+        if not isinstance(payload, dict):
+            raise UpdateFailed("ADS-B Exchange API returned an unexpected response")
+        return payload
+
+    async def _async_fetch_official_api_data(self) -> tuple[list[dict[str, Any]], str | None]:
+        """Fetch aircraft data for the tracked targets via the official ADS-B Exchange API."""
+        base_url = self._official_api_base_url()
+        hex_targets = [target for target in self._targets if is_hex_identifier(target)]
+        named_targets = [target for target in self._targets if target not in hex_targets]
+
+        requests: list[Any] = []
+        if hex_targets:
+            payload = {"hex_list": list(hex_targets)}
+            if len(hex_targets) == 1:
+                payload["hex_list"].append("")
+            requests.append(self._async_api_request("POST", f"{base_url}/hex", json_body=payload))
+
+        if named_targets:
+            requests.append(
+                self._async_api_request(
+                    "POST",
+                    f"{base_url}/registration",
+                    json_body={"registrations": named_targets},
+                )
+            )
+            encoded_callsigns = quote(",".join(named_targets), safe=",")
+            requests.append(
+                self._async_api_request("GET", f"{base_url}/callsign/{encoded_callsigns}")
+            )
+
+        if not requests:
+            return [], None
+
+        payloads = await asyncio.gather(*requests)
+        raw_aircraft: list[dict[str, Any]] = []
+        source_timestamp: float | None = None
+
+        for payload in payloads:
+            aircraft_items = payload.get("ac", [])
+            if isinstance(aircraft_items, list):
+                raw_aircraft.extend(item for item in aircraft_items if isinstance(item, dict))
+
+            payload_now = payload.get("now")
+            if isinstance(payload_now, (int, float)):
+                payload_now_float = float(payload_now)
+                source_timestamp = (
+                    payload_now_float
+                    if source_timestamp is None
+                    else max(source_timestamp, payload_now_float)
+                )
+
+        deduplicated: dict[str, dict[str, Any]] = {}
+        for aircraft in raw_aircraft:
+            dedupe_key = str(
+                aircraft.get("hex")
+                or aircraft.get("r")
+                or aircraft.get("flight")
+                or f"item-{len(deduplicated)}"
+            ).upper()
+            deduplicated[dedupe_key] = aircraft
+
+        source_timestamp_iso = None
+        if source_timestamp is not None:
+            if source_timestamp > 100_000_000_000:
+                source_timestamp /= 1000
+            source_timestamp_iso = datetime.fromtimestamp(source_timestamp, UTC).isoformat()
+
+        return list(deduplicated.values()), source_timestamp_iso
+
     async def _async_update_data(self) -> ADSBExchangeCoordinatorData:
         fetched_at = datetime.now(UTC)
         target_lookup = {target: target for target in self._targets}
@@ -79,19 +206,47 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
         }
         aircraft_by_hex: dict[str, dict[str, Any]] = {}
 
-        try:
-            async with self._session.get(
-                self._source_url,
-                timeout=ClientTimeout(total=self._timeout),
-            ) as response:
-                response.raise_for_status()
-                payload = await response.json(content_type=None)
-        except (ClientError, TimeoutError, ValueError) as err:
-            raise UpdateFailed(f"Unable to fetch ADS-B data: {err}") from err
+        source_timestamp_iso: str | None = None
+        if self._source_url.rstrip("/") == BLOCKED_PUBLIC_FEED_URL.rstrip("/"):
+            raise UpdateFailed(
+                "ADS-B Exchange blocks the public globe aircraft.json feed. Configure an API key with "
+                f"{self._official_api_base_url()} or point the integration at your own tar1090/readsb aircraft.json feed."
+            )
 
-        raw_aircraft = payload.get(ATTR_AIRCRAFT, [])
-        if not isinstance(raw_aircraft, list):
-            raise UpdateFailed("ADS-B feed did not contain an aircraft list")
+        if self._is_official_api_source():
+            raw_aircraft, source_timestamp_iso = await self._async_fetch_official_api_data()
+        else:
+            try:
+                async with self._session.get(
+                    self._source_url,
+                    timeout=ClientTimeout(total=self._timeout),
+                ) as response:
+                    response.raise_for_status()
+                    payload = await response.json(content_type=None)
+            except ClientResponseError as err:
+                if err.status == 403 and self._source_url.rstrip("/") == BLOCKED_PUBLIC_FEED_URL.rstrip("/"):
+                    raise UpdateFailed(
+                        "ADS-B Exchange blocks the public globe aircraft.json feed. Configure an API key with "
+                        f"{self._official_api_base_url()} or point the integration at your own tar1090/readsb aircraft.json feed."
+                    ) from err
+                raise UpdateFailed(f"Unable to fetch ADS-B data: HTTP {err.status}") from err
+            except (ClientError, TimeoutError, ValueError) as err:
+                raise UpdateFailed(f"Unable to fetch ADS-B data: {err}") from err
+
+            raw_aircraft = payload.get(ATTR_AIRCRAFT, [])
+            if not isinstance(raw_aircraft, list):
+                raise UpdateFailed("ADS-B feed did not contain an aircraft list")
+
+            source_timestamp = payload.get("now")
+            if isinstance(source_timestamp, (int, float, str)):
+                try:
+                    source_timestamp_value = float(source_timestamp)
+                except (TypeError, ValueError):
+                    source_timestamp_value = None
+                if source_timestamp_value is not None:
+                    if source_timestamp_value > 100_000_000_000:
+                        source_timestamp_value /= 1000
+                    source_timestamp_iso = datetime.fromtimestamp(source_timestamp_value, UTC).isoformat()
 
         for raw_aircraft_data in raw_aircraft:
             if not isinstance(raw_aircraft_data, dict):
@@ -138,18 +293,6 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
                 item.get("tail_number") or item.get("icao_hex") or "",
             ),
         )
-
-        source_timestamp = payload.get("now")
-        source_timestamp_iso = None
-        if isinstance(source_timestamp, (int, float, str)):
-            try:
-                source_timestamp_value = float(source_timestamp)
-            except (TypeError, ValueError):
-                source_timestamp_value = None
-            if source_timestamp_value is not None:
-                if source_timestamp_value > 100_000_000_000:
-                    source_timestamp_value /= 1000
-                source_timestamp_iso = datetime.fromtimestamp(source_timestamp_value, UTC).isoformat()
 
         return ADSBExchangeCoordinatorData(
             aircraft_by_target=aircraft_by_target,

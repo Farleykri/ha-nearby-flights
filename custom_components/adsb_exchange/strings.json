@@ -8,6 +8,7 @@
           "name": "Name",
           "tracked_aircraft": "Tracked aircraft",
           "data_url": "Aircraft feed URL",
+          "api_key": "ADS-B Exchange API key",
           "map_url": "Map URL",
           "scan_interval": "Update interval (seconds)",
           "request_timeout": "Request timeout (seconds)"
@@ -16,7 +17,9 @@
     },
     "error": {
       "at_least_one_aircraft": "Add at least one aircraft identifier.",
-      "invalid_url": "Enter a valid URL for both the feed and the map."
+      "invalid_url": "Enter a valid URL for both the feed and the map.",
+      "api_key_required": "The official ADS-B Exchange gateway requires an API key.",
+      "unsupported_public_feed": "The public globe aircraft.json feed is blocked. Use the official API gateway or your own aircraft.json feed."
     }
   },
   "options": {
@@ -27,6 +30,7 @@
         "data": {
           "tracked_aircraft": "Tracked aircraft",
           "data_url": "Aircraft feed URL",
+          "api_key": "ADS-B Exchange API key",
           "map_url": "Map URL",
           "scan_interval": "Update interval (seconds)",
           "request_timeout": "Request timeout (seconds)"
@@ -35,7 +39,9 @@
     },
     "error": {
       "at_least_one_aircraft": "Add at least one aircraft identifier.",
-      "invalid_url": "Enter a valid URL for both the feed and the map."
+      "invalid_url": "Enter a valid URL for both the feed and the map.",
+      "api_key_required": "The official ADS-B Exchange gateway requires an API key.",
+      "unsupported_public_feed": "The public globe aircraft.json feed is blocked. Use the official API gateway or your own aircraft.json feed."
     }
   }
 }

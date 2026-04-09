@@ -10,17 +10,21 @@ from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 
 from .const import (
+    BLOCKED_PUBLIC_FEED_URL,
+    CONF_API_KEY,
     CONF_DATA_URL,
     CONF_MAP_URL,
     CONF_REQUEST_TIMEOUT,
     CONF_SCAN_INTERVAL,
     CONF_TRACKED_AIRCRAFT,
     DEFAULT_DATA_URL,
+    DEFAULT_API_KEY,
     DEFAULT_MAP_URL,
     DEFAULT_NAME,
     DEFAULT_REQUEST_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    OFFICIAL_API_HOST,
 )
 from .helpers import parse_tracked_aircraft
 
@@ -37,6 +41,7 @@ def _schema(defaults: dict[str, Any], *, include_name: bool) -> vol.Schema:
             default=defaults[CONF_TRACKED_AIRCRAFT],
         ): str,
         vol.Required(CONF_DATA_URL, default=defaults[CONF_DATA_URL]): str,
+        vol.Optional(CONF_API_KEY, default=defaults[CONF_API_KEY]): str,
         vol.Required(CONF_MAP_URL, default=defaults[CONF_MAP_URL]): str,
         vol.Required(
             CONF_SCAN_INTERVAL,
@@ -62,6 +67,7 @@ def _defaults(data: dict[str, Any]) -> dict[str, Any]:
         CONF_NAME: data.get(CONF_NAME, DEFAULT_NAME),
         CONF_TRACKED_AIRCRAFT: ",".join(data.get(CONF_TRACKED_AIRCRAFT, ())),
         CONF_DATA_URL: data.get(CONF_DATA_URL, DEFAULT_DATA_URL),
+        CONF_API_KEY: data.get(CONF_API_KEY, DEFAULT_API_KEY),
         CONF_MAP_URL: data.get(CONF_MAP_URL, DEFAULT_MAP_URL),
         CONF_SCAN_INTERVAL: data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
         CONF_REQUEST_TIMEOUT: data.get(CONF_REQUEST_TIMEOUT, DEFAULT_REQUEST_TIMEOUT),
@@ -78,12 +84,22 @@ def _normalize_input(user_input: dict[str, Any]) -> tuple[dict[str, Any] | None,
     if not _valid_url(user_input[CONF_DATA_URL]) or not _valid_url(user_input[CONF_MAP_URL]):
         errors["base"] = "invalid_url"
 
+    parsed_data_url = urlparse(user_input[CONF_DATA_URL].strip())
+    normalized_data_url = user_input[CONF_DATA_URL].strip().rstrip("/")
+    api_key = user_input.get(CONF_API_KEY, "").strip()
+
+    if normalized_data_url == BLOCKED_PUBLIC_FEED_URL.rstrip("/"):
+        errors["base"] = "unsupported_public_feed"
+    elif parsed_data_url.netloc.lower() == OFFICIAL_API_HOST and not api_key:
+        errors["base"] = "api_key_required"
+
     if errors:
         return None, errors
 
     normalized = {
         CONF_TRACKED_AIRCRAFT: tracked_aircraft,
         CONF_DATA_URL: user_input[CONF_DATA_URL].strip(),
+        CONF_API_KEY: api_key,
         CONF_MAP_URL: user_input[CONF_MAP_URL].strip(),
         CONF_SCAN_INTERVAL: int(user_input[CONF_SCAN_INTERVAL]),
         CONF_REQUEST_TIMEOUT: int(user_input[CONF_REQUEST_TIMEOUT]),
