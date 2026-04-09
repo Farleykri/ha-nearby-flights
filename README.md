@@ -1,11 +1,11 @@
-# ADS-B Exchange Watchlist for Home Assistant
+# Nearby Flights for Home Assistant
 
 `adsb_exchange` is a HACS-ready custom integration for showing nearby aircraft around your Home Assistant home location with as little setup as possible, and optionally tracking specific aircraft with richer sources.
 
 - one watchlist sensor with the current tracked aircraft list
 - one sensor per tracked aircraft identifier
 - one device tracker per tracked aircraft identifier
-- a Lovelace custom card that embeds an ADS-B Exchange map and a synced details panel
+- a Lovelace custom card that embeds a flight map and a synced details panel
 
 ## What it shows
 
@@ -24,7 +24,7 @@ Nearby or tracked aircraft can expose:
 ## Installation
 
 1. Add this repository to HACS as an `Integration` repository.
-2. Install `ADS-B Exchange Watchlist`.
+2. Install `Nearby Flights`.
 3. Restart Home Assistant.
 4. Add the integration from `Settings -> Devices & Services -> Add Integration`.
 
@@ -103,7 +103,7 @@ For a config entry named `NYC Flights`, the integration creates:
 The watchlist sensor exposes a rich `aircraft` attribute that the Lovelace card reads directly.
 When nearby mode is enabled, that sensor contains aircraft within your configured radius even if no tracked list is configured.
 
-Because the integration also creates `device_tracker` entities, you can use Home Assistant's built-in map card even if you do not want the custom ADS-B Exchange iframe card.
+Because the integration also creates `device_tracker` entities, you can use Home Assistant's built-in map card even if you do not want the custom iframe-based flight card.
 
 ### Native Home Assistant map fallback
 
@@ -169,6 +169,6 @@ show_details: true
 
 - The default OpenSky REST endpoint supports anonymous nearby-state queries, but it is rate-limited by IP. The default 300 second scan interval is intentionally conservative for that source.
 - On April 9, 2026, the public globe feed URL `https://globe.adsbexchange.com/data/aircraft.json` returned HTTP 403 in direct server-side requests. The integration now treats that public feed as unsupported for backend polling.
-- The map card uses the configured map URL and ADS-B Exchange query parameters, so users can center the map on any region they want.
+- The map card uses the configured map URL and query parameters, so users can center the map on any region they want.
 - If you already run your own `tar1090` or other ADS-B Exchange-compatible feed, point `Aircraft feed URL` at that endpoint instead.
 - If the embedded ADS-B Exchange map is blocked by browser or remote framing policy, use the built-in Home Assistant map card with the generated `device_tracker` entities.

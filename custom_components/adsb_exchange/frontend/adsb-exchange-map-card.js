@@ -438,7 +438,7 @@ class AdsbExchangeMapCard extends HTMLElement {
     const entity = this._entityState();
 
     if (!entity) {
-      this._titleEl.textContent = this._config.title || "ADS-B Exchange";
+      this._titleEl.textContent = this._config.title || "Nearby Flights";
       this._metaEl.textContent = `Entity not found: ${this._config.entity}`;
       this._linkEl.href = DEFAULT_MAP_URL;
       this._frameEl.src = "about:blank";
@@ -449,7 +449,7 @@ class AdsbExchangeMapCard extends HTMLElement {
     const aircraft = this._normalizeAircraft(entity);
     const selected = this._pickSelectedAircraft(aircraft);
     const mapUrl = this._buildMapUrl(entity, aircraft, selected);
-    const derivedTitle = this._config.title || entity.attributes.entry_title || "ADS-B Exchange";
+    const derivedTitle = this._config.title || entity.attributes.entry_title || "Nearby Flights";
     const backendError = entity.attributes.last_error;
 
     this._titleEl.textContent = derivedTitle;
@@ -479,8 +479,8 @@ window.customCards = window.customCards || [];
 if (!window.customCards.some((card) => card.type === "adsb-exchange-map-card")) {
   window.customCards.push({
     type: "adsb-exchange-map-card",
-    name: "ADS-B Exchange Map Card",
-    description: "Shows tracked aircraft details with an ADS-B Exchange map.",
+    name: "Nearby Flights Map Card",
+    description: "Shows nearby or tracked aircraft details with an embeddable flight map.",
     preview: true,
   });
 }
