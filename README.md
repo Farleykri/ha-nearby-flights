@@ -57,12 +57,13 @@ show_list: true
 - `show_home`: show a home marker using the Home Assistant location when available
 - `show_list`: show the selectable aircraft list below the map
 - `follow_selected`: center the map on the selected aircraft instead of the home area
-- `tile_url`: optional tile URL template, defaults to `https://tile.openstreetmap.org/{z}/{x}/{y}.png`
+- `tile_url`: optional tile URL template, defaults to `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png`
 - `tile_attribution`: attribution text shown on the map
 - `open_url`: optional external map URL template. Supported placeholders are `{lat}`, `{lon}`, `{zoom}`, `{flight_number}`, `{callsign}`, and `{registration}`
 
 ## Notes
 
-- The default map tiles come from OpenStreetMap. For heavier usage, switch `tile_url` to a provider that matches your expected traffic and terms.
+- The default map tiles now use the same CARTO Voyager raster basemap pattern Home Assistant's own frontend map code uses.
+- If you prefer a different tile source, override `tile_url` and `tile_attribution`.
 - The card only reads Lovelace-visible Home Assistant state. It does not create entities and does not require a companion custom integration.
 - Flights without valid latitude and longitude are skipped on the map but still count toward the source sensor's total.

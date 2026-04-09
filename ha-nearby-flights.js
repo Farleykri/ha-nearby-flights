@@ -1,7 +1,7 @@
 const DEFAULT_ENTITY = "sensor.flightradar24_current_in_area";
 const DEFAULT_TITLE = "Nearby Flights";
-const DEFAULT_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const DEFAULT_TILE_ATTRIBUTION = "Map data (C) OpenStreetMap contributors";
+const DEFAULT_TILE_URL = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+const DEFAULT_TILE_ATTRIBUTION = "Map data (C) OpenStreetMap, (C) CARTO";
 const DEFAULT_OPEN_URL = "https://www.flightradar24.com/{lat},{lon}/{zoom}";
 const TILE_SIZE = 256;
 
@@ -50,6 +50,24 @@ const formatCoordinate = (value) => {
 const formatDistanceNm = (value) => {
   const numeric = toNumber(value);
   return numeric === null ? "Unknown" : `${numeric.toFixed(1)} nm`;
+};
+
+const renderPlaneIcon = (flight, selected) => {
+  const heading = toNumber(flight.heading) ?? 0;
+  const color = selected ? "#1f7bd8" : flight.on_ground ? "#637688" : "#c84d2c";
+
+  return `
+    <span class="marker-rotator" style="transform: rotate(${heading}deg);">
+      <span class="marker-plane">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path
+            fill="${color}"
+            d="M21.6 10.8 14.9 8.3 12.6 1.8 10.8 1v7.4L4.8 6.2 2.8 7l4.7 4.5-4.7 4.5 2 .8 6-2.2v7.4l1.8-.8 2.3-6.5 6.7-2.5z"
+          />
+        </svg>
+      </span>
+    </span>
+  `;
 };
 
 const project = (latitude, longitude, zoom) => {
@@ -232,42 +250,44 @@ class HaNearbyFlightsCard extends HTMLElement {
           cursor: pointer;
         }
 
-        .marker-dot {
+        .marker-rotator {
+          display: block;
+        }
+
+        .marker-plane {
+          display: block;
           width: 14px;
           height: 14px;
-          border-radius: 50%;
-          border: 2px solid rgba(255, 255, 255, 0.92);
-          background: #c84d2c;
-          box-shadow: 0 4px 12px rgba(17, 26, 33, 0.25);
-          transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
+          filter: drop-shadow(0 3px 8px rgba(17, 26, 33, 0.26));
+          transition: transform 120ms ease, filter 120ms ease;
         }
 
-        .marker:hover .marker-dot,
-        .marker:focus-visible .marker-dot,
-        .marker.selected .marker-dot {
-          transform: scale(1.18);
-          box-shadow: 0 6px 16px rgba(17, 26, 33, 0.34);
+        .marker-plane svg {
+          display: block;
+          width: 100%;
+          height: 100%;
         }
 
-        .marker.selected .marker-dot {
-          background: #1f7bd8;
+        .marker:hover .marker-plane,
+        .marker:focus-visible .marker-plane,
+        .marker.selected .marker-plane {
+          transform: scale(1.14);
+          filter: drop-shadow(0 5px 12px rgba(17, 26, 33, 0.34));
         }
 
-        .marker.ground .marker-dot {
-          background: #637688;
-        }
-
-        .marker.home .marker-dot {
-          width: 16px;
-          height: 16px;
+        .marker-home-dot {
+          width: 12px;
+          height: 12px;
           border-radius: 4px;
+          border: 2px solid rgba(255, 255, 255, 0.92);
           background: #1d5f52;
+          box-shadow: 0 4px 12px rgba(17, 26, 33, 0.25);
           transform: rotate(45deg);
         }
 
         .marker-label {
           position: absolute;
-          top: -34px;
+          top: -30px;
           left: 50%;
           transform: translateX(-50%);
           background: rgba(12, 24, 37, 0.88);
@@ -661,10 +681,14 @@ class HaNearbyFlightsCard extends HTMLElement {
         const wrappedTileX = wrapTileX(tileX, zoom);
         const left = tileX * TILE_SIZE - startX;
         const top = tileY * TILE_SIZE - startY;
+        const retinaSuffix = window.devicePixelRatio > 1 ? "@2x" : "";
+        const subdomain = ["a", "b", "c", "d"][Math.abs(tileX + tileY) % 4];
         const url = String(this._config.tile_url || DEFAULT_TILE_URL)
           .replaceAll("{z}", String(zoom))
           .replaceAll("{x}", String(wrappedTileX))
-          .replaceAll("{y}", String(tileY));
+          .replaceAll("{y}", String(tileY))
+          .replaceAll("{r}", retinaSuffix)
+          .replaceAll("{s}", subdomain);
 
         tiles.push(`
           <img
@@ -673,6 +697,7 @@ class HaNearbyFlightsCard extends HTMLElement {
             loading="lazy"
             decoding="async"
             draggable="false"
+            referrerpolicy="strict-origin-when-cross-origin"
             src="${escapeHtml(url)}"
             style="left:${left}px;top:${top}px;"
           >
@@ -715,7 +740,7 @@ class HaNearbyFlightsCard extends HTMLElement {
             style="left:${point.left}px;top:${point.top}px;"
           >
             ${label}
-            <span class="marker-dot"></span>
+            ${renderPlaneIcon(flight, selected)}
           </button>
         `;
       })
@@ -741,7 +766,7 @@ class HaNearbyFlightsCard extends HTMLElement {
                 title="Home"
                 style="left:${homePoint.left}px;top:${homePoint.top}px;"
               >
-                <span class="marker-dot"></span>
+                <span class="marker-home-dot"></span>
               </button>
             `;
           })()
