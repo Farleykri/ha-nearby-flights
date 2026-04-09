@@ -52,19 +52,54 @@ const formatDistanceNm = (value) => {
   return numeric === null ? "Unknown" : `${numeric.toFixed(1)} nm`;
 };
 
-const renderPlaneIcon = (flight, selected) => {
+const isHelicopterFlight = (flight) => {
+  const haystack = [
+    flight.aircraft_model,
+    flight.aircraft_code,
+    flight.aircraft_registration,
+    flight.callsign,
+    flight.flight_number,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return /(helicopter|heli|rotor|rotorcraft|eurocopter|airbus helicopters|bell\s?(206|212|214|222|230|407|412|429|430|505|525)|robinson\s?r(22|44|66)|h125|h130|h135|h145|h160|ec120|ec130|ec135|ec145|as350|as355|aw109|aw119|aw139|s-?76|uh-?60|ch-?47|mh-?60)/.test(
+    haystack,
+  );
+};
+
+const renderAircraftIcon = (flight, selected) => {
   const heading = toNumber(flight.heading) ?? 0;
   const color = selected ? "#1f7bd8" : flight.on_ground ? "#637688" : "#c84d2c";
+  const iconSvg = isHelicopterFlight(flight)
+    ? `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M3 6h18M12 3v3M7 10h8a3 3 0 0 1 3 3v2H9a3 3 0 0 1-3-3v-2h1m11 5 3 3M9 15l-2 4m4-9 2-2h5"
+        />
+      </svg>
+    `
+    : `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          fill="currentColor"
+          d="M11.2 2.2h1.6l1.7 5.2 5.3 1.9v1.9l-5-.8v4.2l1.7 1.4v1.6L12 16.9l-4.8 1.7V17l1.8-1.4v-4.2l-5 .8V9.3l5.3-1.9z"
+        />
+      </svg>
+    `;
 
   return `
     <span class="marker-rotator" style="transform: rotate(${heading}deg);">
-      <span class="marker-plane">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path
-            fill="${color}"
-            d="M21.6 10.8 14.9 8.3 12.6 1.8 10.8 1v7.4L4.8 6.2 2.8 7l4.7 4.5-4.7 4.5 2 .8 6-2.2v7.4l1.8-.8 2.3-6.5 6.7-2.5z"
-          />
-        </svg>
+      <span class="marker-badge" style="background:${color};">
+        <span class="marker-icon">
+          ${iconSvg}
+        </span>
       </span>
     </span>
   `;
@@ -252,27 +287,40 @@ class HaNearbyFlightsCard extends HTMLElement {
 
         .marker-rotator {
           display: block;
+          transform-origin: center center;
         }
 
-        .marker-plane {
+        .marker-badge {
           display: block;
-          width: 14px;
-          height: 14px;
-          filter: drop-shadow(0 3px 8px rgba(17, 26, 33, 0.26));
-          transition: transform 120ms ease, filter 120ms ease;
+          width: 18px;
+          height: 18px;
+          border-radius: 999px;
+          border: 2px solid rgba(255, 255, 255, 0.96);
+          box-shadow: 0 4px 12px rgba(17, 26, 33, 0.28);
+          transition: transform 120ms ease, box-shadow 120ms ease;
+          position: relative;
         }
 
-        .marker-plane svg {
+        .marker-icon {
+          position: absolute;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          color: #ffffff;
+        }
+
+        .marker-icon svg {
           display: block;
-          width: 100%;
-          height: 100%;
+          width: 12px;
+          height: 12px;
+          overflow: visible;
         }
 
-        .marker:hover .marker-plane,
-        .marker:focus-visible .marker-plane,
-        .marker.selected .marker-plane {
-          transform: scale(1.14);
-          filter: drop-shadow(0 5px 12px rgba(17, 26, 33, 0.34));
+        .marker:hover .marker-badge,
+        .marker:focus-visible .marker-badge,
+        .marker.selected .marker-badge {
+          transform: scale(1.1);
+          box-shadow: 0 6px 16px rgba(17, 26, 33, 0.36);
         }
 
         .marker-home-dot {
@@ -526,6 +574,7 @@ class HaNearbyFlightsCard extends HTMLElement {
         callsign: flight.callsign || "",
         flight_number: flight.flight_number || "",
         aircraft_registration: flight.aircraft_registration || "",
+        aircraft_code: flight.aircraft_code || "",
         airline_name: airline,
         aircraft_model: aircraft,
         airport_origin_name: flight.airport_origin_name || "",
@@ -723,9 +772,6 @@ class HaNearbyFlightsCard extends HTMLElement {
         if (selected) {
           classes.push("selected");
         }
-        if (flight.on_ground) {
-          classes.push("ground");
-        }
 
         const label = selected
           ? `<span class="marker-label">${escapeHtml(flight.title)}</span>`
@@ -740,7 +786,7 @@ class HaNearbyFlightsCard extends HTMLElement {
             style="left:${point.left}px;top:${point.top}px;"
           >
             ${label}
-            ${renderPlaneIcon(flight, selected)}
+            ${renderAircraftIcon(flight, selected)}
           </button>
         `;
       })
