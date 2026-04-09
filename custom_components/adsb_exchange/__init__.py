@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 
 from homeassistant.components.http import StaticPathConfig
@@ -9,6 +10,8 @@ from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, FRONTEND_DIRECTORY, FRONTEND_URL_BASE, PLATFORMS
 from .coordinator import ADSBExchangeCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -31,7 +34,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.data[frontend_registered_key] = True
 
     coordinator = ADSBExchangeCoordinator(hass, entry)
-    await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_refresh()
+    if coordinator.last_exception is not None:
+        _LOGGER.warning(
+            "ADS-B Exchange started without live aircraft data for %s: %s",
+            entry.title,
+            coordinator.last_exception,
+        )
 
     hass.data[DOMAIN][entry.entry_id] = ADSBExchangeRuntimeData(coordinator=coordinator)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))

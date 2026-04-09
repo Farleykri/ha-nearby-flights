@@ -96,6 +96,30 @@ def coerce_int(value: Any) -> int | None:
         return None
 
 
+def meters_to_feet(value: Any) -> int | None:
+    """Convert meters to feet when possible."""
+    meters = coerce_float(value)
+    if meters is None:
+        return None
+    return int(round(meters * 3.28084))
+
+
+def meters_per_second_to_knots(value: Any) -> float | None:
+    """Convert meters per second to knots when possible."""
+    meters_per_second = coerce_float(value)
+    if meters_per_second is None:
+        return None
+    return round(meters_per_second * 1.943844, 2)
+
+
+def meters_per_second_to_fpm(value: Any) -> int | None:
+    """Convert meters per second to feet per minute when possible."""
+    meters_per_second = coerce_float(value)
+    if meters_per_second is None:
+        return None
+    return int(round(meters_per_second * 196.8504))
+
+
 def iso_timestamp(value: float | int | None) -> str | None:
     """Convert an epoch timestamp to ISO8601."""
     if value in (None, ""):
@@ -184,6 +208,42 @@ def summarize_aircraft(aircraft: dict[str, Any], fetched_at: datetime) -> dict[s
     }
 
     return summary
+
+
+def opensky_state_to_aircraft(
+    state: list[Any],
+    response_time: int | float | None,
+) -> dict[str, Any] | None:
+    """Convert an OpenSky state vector row to the internal aircraft shape."""
+    if len(state) < 17:
+        return None
+
+    response_timestamp = coerce_float(response_time)
+    last_contact = coerce_float(state[4])
+    time_position = coerce_float(state[3])
+
+    return {
+        "hex": str(state[0]).upper() if state[0] else None,
+        "flight": normalize_callsign(state[1]),
+        "lat": coerce_float(state[6]),
+        "lon": coerce_float(state[5]),
+        "alt_baro": meters_to_feet(state[7]),
+        "alt_geom": meters_to_feet(state[13]),
+        "gnd": state[8] is True,
+        "gs": meters_per_second_to_knots(state[9]),
+        "track": coerce_float(state[10]),
+        "baro_rate": meters_per_second_to_fpm(state[11]),
+        "squawk": state[14],
+        "category": coerce_int(state[17]) if len(state) > 17 else None,
+        "type": "opensky",
+        "desc": state[2],
+        "seen": response_timestamp - last_contact
+        if response_timestamp is not None and last_contact is not None
+        else None,
+        "seen_pos": response_timestamp - time_position
+        if response_timestamp is not None and time_position is not None
+        else None,
+    }
 
 
 def aircraft_candidates(aircraft: dict[str, Any]) -> dict[str, str]:

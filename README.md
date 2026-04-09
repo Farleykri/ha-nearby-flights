@@ -1,6 +1,6 @@
 # ADS-B Exchange Watchlist for Home Assistant
 
-`adsb_exchange` is a HACS-ready custom integration for showing nearby aircraft around your Home Assistant home location and optionally tracking specific aircraft from an ADS-B Exchange-compatible source.
+`adsb_exchange` is a HACS-ready custom integration for showing nearby aircraft around your Home Assistant home location with as little setup as possible, and optionally tracking specific aircraft with richer sources.
 
 - one watchlist sensor with the current tracked aircraft list
 - one sensor per tracked aircraft identifier
@@ -33,8 +33,8 @@ Nearby or tracked aircraft can expose:
 During config flow you can set:
 
 - `Tracked aircraft`: optional comma-separated tail numbers, ICAO hex codes, or callsigns
-- `Aircraft feed URL`: defaults to `https://gateway.adsbexchange.com/api/aircraft/v2`
-- `ADS-B Exchange API key`: required when using the official ADS-B Exchange gateway
+- `Aircraft feed URL`: defaults to `https://opensky-network.org/api/states/all`
+- `ADS-B Exchange API key`: only needed if you switch to the official ADS-B Exchange gateway
 - `Show nearby flights`: enabled by default and centered on the Home Assistant home location
 - `Nearby radius`: defaults to `25` nautical miles
 - `Map URL`: defaults to `https://globe.adsbexchange.com/`
@@ -47,9 +47,26 @@ Example tracked aircraft list:
 N123AB, A1B2C3, UAL123
 ```
 
-If you only want flights over your house, leave `Tracked aircraft` empty and keep `Show nearby flights` enabled.
+If you only want flights over your house, leave `Tracked aircraft` empty and keep `Show nearby flights` enabled. With the default settings, the integration is meant to work right after installation.
 
 ## Supported data sources
+
+### Default low-friction source: OpenSky nearby flights
+
+Use the defaults:
+
+- `Aircraft feed URL`: `https://opensky-network.org/api/states/all`
+- `Show nearby flights`: enabled
+- `Nearby radius`: 25 nautical miles
+
+The integration queries OpenSky's `states/all` endpoint with a bounding box around your Home Assistant home location and converts those state vectors into Home Assistant-friendly aircraft entities.
+
+This is the easiest setup path, but it has tradeoffs:
+
+- tail numbers are usually not available from the default OpenSky state-vector response
+- tracked-aircraft matching is strongest for ICAO hex and callsign
+- anonymous OpenSky usage is rate-limited, so the default poll interval is set conservatively
+- if live data is temporarily unavailable, the integration still loads so the map card can keep working as a nearby-flight viewer
 
 ### Official ADS-B Exchange API
 
@@ -150,6 +167,7 @@ show_details: true
 
 ## Notes
 
+- The default OpenSky REST endpoint supports anonymous nearby-state queries, but it is rate-limited by IP. The default 300 second scan interval is intentionally conservative for that source.
 - On April 9, 2026, the public globe feed URL `https://globe.adsbexchange.com/data/aircraft.json` returned HTTP 403 in direct server-side requests. The integration now treats that public feed as unsupported for backend polling.
 - The map card uses the configured map URL and ADS-B Exchange query parameters, so users can center the map on any region they want.
 - If you already run your own `tar1090` or other ADS-B Exchange-compatible feed, point `Aircraft feed URL` at that endpoint instead.

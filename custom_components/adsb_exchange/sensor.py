@@ -69,25 +69,32 @@ class ADSBExchangeWatchlistSensor(ADSBExchangeBaseEntity, SensorEntity):
         return len(self.coordinator.data.aircraft)
 
     @property
+    def available(self) -> bool:
+        """Keep the watchlist entity available so the card can render its map fallback."""
+        return True
+
+    @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return detailed watchlist attributes for the custom card."""
         data = self.coordinator.data
-        if data is None:
-            return {}
-
-        return {
-            ATTR_AIRCRAFT: data.aircraft,
+        attributes = {
+            ATTR_AIRCRAFT: data.aircraft if data is not None else [],
             "tracked_aircraft": list(self.coordinator.targets),
-            "nearby_enabled": data.nearby_enabled,
-            "nearby_radius_nm": data.nearby_radius_nm,
-            "home_latitude": data.home_latitude,
-            "home_longitude": data.home_longitude,
-            "data_url": data.source_url,
+            "nearby_enabled": data.nearby_enabled if data is not None else self.coordinator.nearby_enabled,
+            "nearby_radius_nm": data.nearby_radius_nm if data is not None else self.coordinator.nearby_radius_nm,
+            "home_latitude": data.home_latitude if data is not None else self.coordinator.home_latitude,
+            "home_longitude": data.home_longitude if data is not None else self.coordinator.home_longitude,
+            "data_url": data.source_url if data is not None else self.coordinator.source_url,
             "map_url": self._entry.options.get(CONF_MAP_URL, self._entry.data.get(CONF_MAP_URL)),
-            "fetched_at": data.fetched_at,
-            "source_timestamp": data.source_timestamp,
+            "fetched_at": data.fetched_at if data is not None else None,
+            "source_timestamp": data.source_timestamp if data is not None else None,
             "entry_title": self._entry.title,
         }
+
+        if self.coordinator.last_exception is not None:
+            attributes["last_error"] = str(self.coordinator.last_exception)
+
+        return attributes
 
 
 class ADSBExchangeAircraftSensor(ADSBExchangeBaseEntity, SensorEntity):

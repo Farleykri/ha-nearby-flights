@@ -2,13 +2,13 @@
   "config": {
     "step": {
       "user": {
-        "title": "Set up an ADS-B Exchange watchlist",
-        "description": "Track aircraft by tail number, ICAO hex, or callsign, and optionally show nearby flights around your Home Assistant home location.",
+        "title": "Set up nearby flights",
+        "description": "The default setup shows nearby flights around your Home Assistant home location with minimal configuration. Tracked aircraft and alternate data sources are optional advanced settings.",
         "data": {
           "name": "Name",
           "tracked_aircraft": "Tracked aircraft",
           "data_url": "Aircraft feed URL",
-          "api_key": "ADS-B Exchange API key",
+          "api_key": "ADS-B Exchange API key (gateway only)",
           "enable_nearby": "Show nearby flights",
           "nearby_radius": "Nearby radius (nautical miles)",
           "map_url": "Map URL",
@@ -22,18 +22,19 @@
       "invalid_url": "Enter a valid URL for both the feed and the map.",
       "api_key_required": "The official ADS-B Exchange gateway requires an API key.",
       "unsupported_public_feed": "The public globe aircraft.json feed is blocked. Use the official API gateway or your own aircraft.json feed.",
-      "no_mode_selected": "Enable nearby flights or add at least one tracked aircraft."
+      "no_mode_selected": "Enable nearby flights or add at least one tracked aircraft.",
+      "opensky_radius_too_large": "For the default OpenSky source, keep the nearby radius at 100 nautical miles or less."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Update ADS-B Exchange options",
-        "description": "Adjust nearby-flight behavior, the aircraft list, or change the feed and map URLs.",
+        "title": "Update nearby flight options",
+        "description": "Adjust nearby-flight behavior, tracked aircraft, or advanced data-source settings.",
         "data": {
           "tracked_aircraft": "Tracked aircraft",
           "data_url": "Aircraft feed URL",
-          "api_key": "ADS-B Exchange API key",
+          "api_key": "ADS-B Exchange API key (gateway only)",
           "enable_nearby": "Show nearby flights",
           "nearby_radius": "Nearby radius (nautical miles)",
           "map_url": "Map URL",
@@ -47,7 +48,8 @@
       "invalid_url": "Enter a valid URL for both the feed and the map.",
       "api_key_required": "The official ADS-B Exchange gateway requires an API key.",
       "unsupported_public_feed": "The public globe aircraft.json feed is blocked. Use the official API gateway or your own aircraft.json feed.",
-      "no_mode_selected": "Enable nearby flights or add at least one tracked aircraft."
+      "no_mode_selected": "Enable nearby flights or add at least one tracked aircraft.",
+      "opensky_radius_too_large": "For the default OpenSky source, keep the nearby radius at 100 nautical miles or less."
     }
   }
 }

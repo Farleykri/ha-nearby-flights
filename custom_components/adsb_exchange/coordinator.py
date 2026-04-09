@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import logging
+import math
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -28,11 +29,14 @@ from .const import (
     DOMAIN,
     OFFICIAL_API_BASE_PATH,
     OFFICIAL_API_HOST,
+    OPENSKY_API_HOST,
+    OPENSKY_API_PATH,
 )
 from .helpers import (
     aircraft_candidates,
     haversine_distance_nm,
     is_hex_identifier,
+    opensky_state_to_aircraft,
     parse_tracked_aircraft,
     summarize_aircraft,
 )
@@ -94,6 +98,21 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
         """Return the configured nearby search radius."""
         return self._nearby_radius_nm
 
+    @property
+    def home_latitude(self) -> float | None:
+        """Return the configured Home Assistant latitude."""
+        return self._home_latitude
+
+    @property
+    def home_longitude(self) -> float | None:
+        """Return the configured Home Assistant longitude."""
+        return self._home_longitude
+
+    @property
+    def source_url(self) -> str:
+        """Return the configured data source URL."""
+        return self._source_url
+
     def _config(self, key: str) -> Any:
         """Get a config value with options preferred over data."""
         return self.config_entry.options.get(key, self.config_entry.data.get(key))
@@ -115,6 +134,16 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
         """Normalize any official API URL to the base API path."""
         parsed = urlsplit(self._source_url)
         return urlunsplit((parsed.scheme, parsed.netloc, OFFICIAL_API_BASE_PATH, "", ""))
+
+    def _is_opensky_source(self) -> bool:
+        """Return True when the configured source is OpenSky."""
+        parsed = urlsplit(self._source_url)
+        return parsed.netloc.lower() == OPENSKY_API_HOST and parsed.path.startswith(OPENSKY_API_PATH)
+
+    def _opensky_base_url(self) -> str:
+        """Normalize any OpenSky URL to the states endpoint."""
+        parsed = urlsplit(self._source_url)
+        return urlunsplit((parsed.scheme, parsed.netloc, OPENSKY_API_PATH, "", ""))
 
     async def _async_api_request(
         self,
@@ -235,6 +264,79 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
 
         return list(deduplicated.values()), source_timestamp_iso
 
+    async def _async_fetch_opensky_data(self) -> tuple[list[dict[str, Any]], str | None]:
+        """Fetch aircraft data via the OpenSky states endpoint."""
+        if self._enable_nearby:
+            if self._home_latitude is None or self._home_longitude is None:
+                raise UpdateFailed(
+                    "Nearby mode requires Home Assistant latitude and longitude to be configured."
+                )
+
+            latitude_delta = self._nearby_radius_nm / 60
+            longitude_scale = max(abs(math.cos(math.radians(self._home_latitude))), 0.01)
+            longitude_delta = self._nearby_radius_nm / (60 * longitude_scale)
+
+            lamin = self._home_latitude - latitude_delta
+            lamax = self._home_latitude + latitude_delta
+            lomin = self._home_longitude - longitude_delta
+            lomax = self._home_longitude + longitude_delta
+
+            params = (
+                f"lamin={lamin}&lomin={lomin}&lamax={lamax}&lomax={lomax}&extended=1"
+            )
+        else:
+            hex_targets = [target.lower() for target in self._targets if is_hex_identifier(target)]
+            non_hex_targets = [target for target in self._targets if not is_hex_identifier(target)]
+            if non_hex_targets:
+                raise UpdateFailed(
+                    "The default OpenSky source supports nearby flights and ICAO hex tracking. "
+                    "Use ADS-B Exchange or a local feed for tail-number or callsign-first tracking."
+                )
+            if not hex_targets:
+                return [], None
+            params = "&".join(f"icao24={hex_target}" for hex_target in hex_targets)
+
+        url = f"{self._opensky_base_url()}?{params}"
+
+        try:
+            async with self._session.get(
+                url,
+                timeout=ClientTimeout(total=self._timeout),
+                headers={"Accept": "application/json"},
+            ) as response:
+                response.raise_for_status()
+                payload = await response.json(content_type=None)
+        except ClientResponseError as err:
+            if err.status == 429:
+                raise UpdateFailed(
+                    "OpenSky rate limit exceeded. Increase the scan interval or reduce the nearby radius."
+                ) from err
+            raise UpdateFailed(f"Unable to fetch OpenSky data: HTTP {err.status}") from err
+        except (ClientError, TimeoutError, ValueError) as err:
+            raise UpdateFailed(f"Unable to fetch OpenSky data: {err}") from err
+
+        if not isinstance(payload, dict):
+            raise UpdateFailed("OpenSky returned an unexpected response")
+
+        response_time = payload.get("time")
+        raw_states = payload.get("states", [])
+        if not isinstance(raw_states, list):
+            raise UpdateFailed("OpenSky response did not contain state vectors")
+
+        aircraft: list[dict[str, Any]] = []
+        for state in raw_states:
+            if not isinstance(state, list):
+                continue
+            normalized_state = opensky_state_to_aircraft(state, response_time)
+            if normalized_state is not None:
+                aircraft.append(normalized_state)
+
+        source_timestamp_iso = None
+        if isinstance(response_time, (int, float)):
+            source_timestamp_iso = datetime.fromtimestamp(float(response_time), UTC).isoformat()
+
+        return aircraft, source_timestamp_iso
+
     async def _async_update_data(self) -> ADSBExchangeCoordinatorData:
         fetched_at = datetime.now(UTC)
         target_lookup = {target: target for target in self._targets}
@@ -252,6 +354,8 @@ class ADSBExchangeCoordinator(DataUpdateCoordinator[ADSBExchangeCoordinatorData]
 
         if self._is_official_api_source():
             raw_aircraft, source_timestamp_iso = await self._async_fetch_official_api_data()
+        elif self._is_opensky_source():
+            raw_aircraft, source_timestamp_iso = await self._async_fetch_opensky_data()
         else:
             try:
                 async with self._session.get(

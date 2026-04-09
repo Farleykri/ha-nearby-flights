@@ -349,9 +349,14 @@ class AdsbExchangeMapCard extends HTMLElement {
     }
 
     if (!aircraft.length) {
+      const backendError = this._entityState()?.attributes?.last_error;
       this._detailsEl.innerHTML = `
         <div class="empty">
-          No nearby or tracked aircraft are visible right now. The card will update automatically when the feed sees them again.
+          ${
+            backendError
+              ? `Live aircraft data is temporarily unavailable: ${escapeHtml(backendError)}`
+              : "No nearby or tracked aircraft are visible right now. The card will update automatically when the feed sees them again."
+          }
         </div>
       `;
       return;
@@ -445,13 +450,16 @@ class AdsbExchangeMapCard extends HTMLElement {
     const selected = this._pickSelectedAircraft(aircraft);
     const mapUrl = this._buildMapUrl(entity, aircraft, selected);
     const derivedTitle = this._config.title || entity.attributes.entry_title || "ADS-B Exchange";
+    const backendError = entity.attributes.last_error;
 
     this._titleEl.textContent = derivedTitle;
     const nearbyEnabled = Boolean(entity.attributes.nearby_enabled);
     const radius = entity.attributes.nearby_radius_nm;
-    this._metaEl.textContent = nearbyEnabled
-      ? `${aircraft.length} aircraft visible within ${radius} nm`
-      : `${aircraft.length} tracked aircraft visible`;
+    this._metaEl.textContent = backendError
+      ? "Map available, live aircraft data temporarily unavailable"
+      : nearbyEnabled
+        ? `${aircraft.length} aircraft visible within ${radius} nm`
+        : `${aircraft.length} tracked aircraft visible`;
     this._linkEl.href = mapUrl;
     this._frameEl.style.height = `${Number(this._config.height) || 420}px`;
 

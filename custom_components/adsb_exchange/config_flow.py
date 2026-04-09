@@ -29,6 +29,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     OFFICIAL_API_HOST,
+    OPENSKY_API_HOST,
 )
 from .helpers import parse_tracked_aircraft
 
@@ -108,6 +109,8 @@ def _normalize_input(user_input: dict[str, Any]) -> tuple[dict[str, Any] | None,
         errors["base"] = "unsupported_public_feed"
     elif parsed_data_url.netloc.lower() == OFFICIAL_API_HOST and not api_key:
         errors["base"] = "api_key_required"
+    elif parsed_data_url.netloc.lower() == OPENSKY_API_HOST and nearby_radius > 100:
+        errors["base"] = "opensky_radius_too_large"
 
     if errors:
         return None, errors
