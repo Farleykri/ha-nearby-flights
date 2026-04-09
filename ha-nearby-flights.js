@@ -4,8 +4,8 @@ const DEFAULT_TILE_URL = "https://basemaps.cartocdn.com/rastertiles/voyager/{z}/
 const DEFAULT_TILE_ATTRIBUTION = "Map data (C) OpenStreetMap, (C) CARTO";
 const DEFAULT_OPEN_URL = "https://www.flightradar24.com/{lat},{lon}/{zoom}";
 const TILE_SIZE = 256;
-const ARC_GIS_OPEN_ATTRIBUTION =
-  "Basemap (C) Esri | Open data may include Overture Maps, OpenStreetMap, Microsoft, and Esri Community Maps";
+const ESRI_WORLD_IMAGERY_ATTRIBUTION =
+  "Imagery (C) Esri, Maxar, Earthstar Geographics, and the GIS User Community";
 const TILE_THEME_PRESETS = {
   standard: {
     label: "Standard",
@@ -14,21 +14,19 @@ const TILE_THEME_PRESETS = {
   },
   light: {
     label: "Light",
-    tile_url:
-      "https://static-map-tiles-api.arcgis.com/arcgis/rest/services/static-basemap-tiles-service/v1/open/streets/static/tile/{z}/{y}/{x}",
-    tile_attribution: ARC_GIS_OPEN_ATTRIBUTION,
+    tile_url: "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",
+    tile_attribution: DEFAULT_TILE_ATTRIBUTION,
   },
   dark: {
     label: "Dark",
-    tile_url:
-      "https://static-map-tiles-api.arcgis.com/arcgis/rest/services/static-basemap-tiles-service/v1/open/navigation-dark/static/tile/{z}/{y}/{x}",
-    tile_attribution: ARC_GIS_OPEN_ATTRIBUTION,
+    tile_url: "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    tile_attribution: DEFAULT_TILE_ATTRIBUTION,
   },
   satellite: {
     label: "Satellite",
     tile_url:
-      "https://static-map-tiles-api.arcgis.com/arcgis/rest/services/static-basemap-tiles-service/v1/open/hybrid/detail/static/tile/{z}/{y}/{x}",
-    tile_attribution: ARC_GIS_OPEN_ATTRIBUTION,
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    tile_attribution: ESRI_WORLD_IMAGERY_ATTRIBUTION,
   },
 };
 
