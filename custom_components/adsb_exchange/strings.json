@@ -1,0 +1,41 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up an ADS-B Exchange watchlist",
+        "description": "Track aircraft by tail number, ICAO hex, or callsign. Separate multiple values with commas.",
+        "data": {
+          "name": "Name",
+          "tracked_aircraft": "Tracked aircraft",
+          "data_url": "Aircraft feed URL",
+          "map_url": "Map URL",
+          "scan_interval": "Update interval (seconds)",
+          "request_timeout": "Request timeout (seconds)"
+        }
+      }
+    },
+    "error": {
+      "at_least_one_aircraft": "Add at least one aircraft identifier.",
+      "invalid_url": "Enter a valid URL for both the feed and the map."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Update ADS-B Exchange options",
+        "description": "Adjust the aircraft list or change the feed and map URLs.",
+        "data": {
+          "tracked_aircraft": "Tracked aircraft",
+          "data_url": "Aircraft feed URL",
+          "map_url": "Map URL",
+          "scan_interval": "Update interval (seconds)",
+          "request_timeout": "Request timeout (seconds)"
+        }
+      }
+    },
+    "error": {
+      "at_least_one_aircraft": "Add at least one aircraft identifier.",
+      "invalid_url": "Enter a valid URL for both the feed and the map."
+    }
+  }
+}

@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Home Assistant / tooling
+.storage/
+.pytest_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
