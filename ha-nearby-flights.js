@@ -29,6 +29,9 @@ const TILE_THEME_PRESETS = {
     tile_attribution: ESRI_WORLD_IMAGERY_ATTRIBUTION,
   },
 };
+const THEME_CHOICES = ["auto", "light", "dark", "satellite"];
+const MIN_MAP_ZOOM = 2;
+const MAX_MAP_ZOOM = 16;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
@@ -65,11 +68,6 @@ const formatValue = (value, suffix = "") => {
   }
 
   return `${value}${suffix}`;
-};
-
-const formatCoordinate = (value) => {
-  const numeric = toNumber(value);
-  return numeric === null ? "Unknown" : numeric.toFixed(4);
 };
 
 const formatDistanceNm = (value) => {
@@ -141,6 +139,48 @@ const project = (latitude, longitude, zoom) => {
   };
 };
 
+const unproject = (x, y, zoom) => {
+  const scale = TILE_SIZE * 2 ** zoom;
+  const wrappedX = ((x % scale) + scale) % scale;
+  const clampedY = clamp(y, 0, scale);
+  const longitude = (wrappedX / scale) * 360 - 180;
+  const mercatorY = Math.PI - (2 * Math.PI * clampedY) / scale;
+  const latitude = (180 / Math.PI) * Math.atan(Math.sinh(mercatorY));
+
+  return { latitude, longitude };
+};
+
+const parseTimestamp = (value) => {
+  if (!hasValue(value)) {
+    return null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 1_000_000_000_000 ? value : value * 1000;
+  }
+
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const formatAge = (ageMs) => {
+  const seconds = Math.max(0, Math.floor(ageMs / 1000));
+  if (seconds < 10) {
+    return "just now";
+  }
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+};
+
 const wrapTileX = (value, zoom) => {
   const maxTiles = 2 ** zoom;
   return ((value % maxTiles) + maxTiles) % maxTiles;
@@ -167,8 +207,19 @@ class HaNearbyFlightsCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._config = null;
     this._hass = null;
-    this._activeTheme = "standard";
+    this._activeTheme = "auto";
+    this._themeMenuOpen = false;
+    this._detailsExpanded = false;
     this._selectedFlightId = null;
+    this._viewCenter = null;
+    this._viewZoom = null;
+    this._activePointers = new Map();
+    this._dragState = null;
+    this._pinchState = null;
+    this._mapRenderFrame = null;
+    this._lastMapContext = null;
+    this._lastStatusContext = null;
+    this._statusTimer = null;
     this._mapSize = { width: 0, height: 0 };
     this._resizeObserver = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -182,16 +233,32 @@ class HaNearbyFlightsCard extends HTMLElement {
     });
 
     this._renderBase();
+    this._bindMapInteractions();
   }
 
   connectedCallback() {
     if (this._mapEl) {
       this._resizeObserver.observe(this._mapEl);
     }
+    if (!this._statusTimer) {
+      this._statusTimer = window.setInterval(() => this._renderFreshnessStatus(), 30000);
+    }
   }
 
   disconnectedCallback() {
     this._resizeObserver.disconnect();
+    if (this._statusTimer) {
+      window.clearInterval(this._statusTimer);
+      this._statusTimer = null;
+    }
+    if (this._mapRenderFrame) {
+      window.cancelAnimationFrame(this._mapRenderFrame);
+      this._mapRenderFrame = null;
+    }
+  }
+
+  static getConfigElement() {
+    return document.createElement("ha-nearby-flights-card-editor");
   }
 
   static getStubConfig() {
@@ -207,8 +274,11 @@ class HaNearbyFlightsCard extends HTMLElement {
       height: 440,
       zoom: 10,
       max_flights: 60,
-      map_theme: "standard",
+      map_theme: "auto",
       show_theme_toggle: true,
+      interactive_map: true,
+      details_expanded: false,
+      stale_after_minutes: 5,
       show_center_label: false,
       compact_footer: true,
       show_home: true,
@@ -219,7 +289,11 @@ class HaNearbyFlightsCard extends HTMLElement {
       open_url: DEFAULT_OPEN_URL,
       ...config,
     };
-    this._activeTheme = this._resolveThemeKey(this._config.map_theme);
+    this._activeTheme = this._resolveThemeChoice(this._config.map_theme);
+    this._detailsExpanded = this._config.details_expanded === true;
+    this._viewCenter = null;
+    this._viewZoom = null;
+    this._lastMapContext = null;
 
     this._updateCard();
   }
@@ -230,7 +304,10 @@ class HaNearbyFlightsCard extends HTMLElement {
   }
 
   getCardSize() {
-    return this._config?.show_list === false ? 7 : 10;
+    if (this._config?.show_list === false) {
+      return 7;
+    }
+    return this._detailsExpanded ? 10 : 8;
   }
 
   _renderBase() {
@@ -265,6 +342,34 @@ class HaNearbyFlightsCard extends HTMLElement {
           margin-top: 4px;
           color: var(--secondary-text-color);
           font-size: 0.86rem;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          flex-wrap: wrap;
+        }
+
+        .freshness {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+        }
+
+        .freshness-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #2d9d78;
+          box-shadow: 0 0 0 3px rgba(45, 157, 120, 0.12);
+        }
+
+        .freshness.stale {
+          color: var(--error-color);
+          font-weight: 700;
+        }
+
+        .freshness.stale .freshness-dot {
+          background: var(--error-color);
+          box-shadow: 0 0 0 3px rgba(198, 52, 52, 0.12);
         }
 
         .open-link {
@@ -284,40 +389,61 @@ class HaNearbyFlightsCard extends HTMLElement {
         }
 
         .theme-switch {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          flex-wrap: wrap;
+          position: relative;
         }
 
         .theme-switch[hidden] {
           display: none;
         }
 
-        .theme-button {
+        .theme-menu-button {
+          width: 30px;
+          height: 30px;
           border: 1px solid rgba(96, 120, 144, 0.24);
-          background: rgba(255, 255, 255, 0.72);
+          background: var(--ha-card-background, var(--card-background-color));
           color: var(--primary-text-color);
-          border-radius: 999px;
-          padding: 5px 10px;
-          font-size: 0.75rem;
-          line-height: 1;
+          border-radius: 9px;
+          padding: 6px;
           cursor: pointer;
-          transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+          display: grid;
+          place-items: center;
         }
 
-        .theme-button:hover,
-        .theme-button:focus-visible {
-          transform: translateY(-1px);
-          border-color: rgba(31, 123, 216, 0.36);
-          background: rgba(255, 255, 255, 0.9);
+        .theme-menu-button svg {
+          width: 16px;
+          height: 16px;
         }
 
-        .theme-button.active {
+        .theme-menu-panel {
+          position: absolute;
+          top: 36px;
+          right: 0;
+          z-index: 20;
+          min-width: 150px;
+          padding: 6px;
+          border: 1px solid rgba(96, 120, 144, 0.22);
+          border-radius: 12px;
+          background: var(--ha-card-background, var(--card-background-color));
+          box-shadow: 0 12px 28px rgba(12, 24, 37, 0.2);
+        }
+
+        .theme-option {
+          width: 100%;
+          border: 0;
+          border-radius: 8px;
+          background: transparent;
+          color: var(--primary-text-color);
+          padding: 8px 10px;
+          text-align: left;
+          cursor: pointer;
+          font-size: 0.82rem;
+        }
+
+        .theme-option:hover,
+        .theme-option:focus-visible,
+        .theme-option.active {
           background: rgba(31, 123, 216, 0.12);
-          border-color: rgba(31, 123, 216, 0.52);
           color: var(--primary-color);
-          font-weight: 700;
         }
 
         .map-shell {
@@ -333,6 +459,34 @@ class HaNearbyFlightsCard extends HTMLElement {
             linear-gradient(180deg, rgba(11, 21, 33, 0.28), rgba(11, 21, 33, 0.08)),
             #d9e7ef;
           border: 1px solid rgba(100, 122, 140, 0.18);
+          touch-action: none;
+          cursor: grab;
+        }
+
+        .map.dragging {
+          cursor: grabbing;
+        }
+
+        .map-controls {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          z-index: 8;
+          display: grid;
+          gap: 5px;
+        }
+
+        .map-control {
+          width: 30px;
+          height: 30px;
+          border: 1px solid rgba(255, 255, 255, 0.7);
+          border-radius: 9px;
+          background: rgba(12, 24, 37, 0.76);
+          color: #ffffff;
+          font-size: 1.05rem;
+          line-height: 1;
+          cursor: pointer;
+          backdrop-filter: blur(6px);
         }
 
         .tiles {
@@ -492,6 +646,18 @@ class HaNearbyFlightsCard extends HTMLElement {
           gap: 12px;
         }
 
+        .details-toggle {
+          width: 100%;
+          border: 1px solid rgba(96, 120, 144, 0.18);
+          border-radius: 12px;
+          background: transparent;
+          color: var(--primary-color);
+          padding: 9px 12px;
+          font-size: 0.84rem;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
         .selected {
           border: 1px solid rgba(96, 120, 144, 0.18);
           border-radius: 18px;
@@ -638,9 +804,19 @@ class HaNearbyFlightsCard extends HTMLElement {
     return this._hass?.states?.[this._config?.entity || DEFAULT_ENTITY];
   }
 
-  _resolveThemeKey(theme) {
-    const key = String(theme || "standard").toLowerCase();
-    return TILE_THEME_PRESETS[key] ? key : "standard";
+  _resolveThemeChoice(theme) {
+    const choice = String(theme || "auto").toLowerCase();
+    if (choice === "standard") {
+      return "light";
+    }
+    return THEME_CHOICES.includes(choice) ? choice : "auto";
+  }
+
+  _isDarkMode() {
+    if (typeof this._hass?.themes?.darkMode === "boolean") {
+      return this._hass.themes.darkMode;
+    }
+    return Boolean(window.matchMedia?.("(prefers-color-scheme: dark)")?.matches);
   }
 
   _usingCustomTileSource() {
@@ -658,10 +834,13 @@ class HaNearbyFlightsCard extends HTMLElement {
       };
     }
 
-    const key = this._resolveThemeKey(this._activeTheme || this._config?.map_theme);
+    const choice = this._resolveThemeChoice(this._activeTheme || this._config?.map_theme);
+    const key = choice === "auto" ? (this._isDarkMode() ? "dark" : "light") : choice;
     return {
-      key,
       ...TILE_THEME_PRESETS[key],
+      key,
+      choice,
+      label: choice === "auto" ? `Auto (${TILE_THEME_PRESETS[key].label})` : TILE_THEME_PRESETS[key].label,
     };
   }
 
@@ -676,31 +855,268 @@ class HaNearbyFlightsCard extends HTMLElement {
       return;
     }
 
-    const activeKey = this._resolveThemeKey(this._activeTheme || this._config?.map_theme);
-    const order = ["standard", "light", "dark", "satellite"];
+    const activeChoice = this._resolveThemeChoice(this._activeTheme || this._config?.map_theme);
+    const labels = {
+      auto: `Auto (${this._isDarkMode() ? "Dark" : "Light"})`,
+      light: "Light",
+      dark: "Dark",
+      satellite: "Satellite",
+    };
 
     this._themeSwitchEl.hidden = false;
-    this._themeSwitchEl.innerHTML = order
-      .map((key) => {
-        const preset = TILE_THEME_PRESETS[key];
-        return `
-          <button
-            class="theme-button ${activeKey === key ? "active" : ""}"
-            type="button"
-            data-theme="${key}"
-          >
-            ${escapeHtml(preset.label)}
-          </button>
-        `;
-      })
-      .join("");
+    this._themeSwitchEl.innerHTML = `
+      <button class="theme-menu-button" type="button" aria-label="Map theme" title="Map theme">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="m12 2 9 5-9 5-9-5zm-7.6 9.2L12 15.4l7.6-4.2L21 12l-9 5-9-5zm0 5L12 20.4l7.6-4.2L21 17l-9 5-9-5z"/>
+        </svg>
+      </button>
+      ${
+        this._themeMenuOpen
+          ? `<div class="theme-menu-panel">${THEME_CHOICES.map((choice) => {
+              const active = activeChoice === choice;
+              return `
+                <button class="theme-option ${active ? "active" : ""}" type="button" data-theme="${choice}">
+                  ${active ? "&#10003; " : ""}${escapeHtml(labels[choice])}
+                </button>
+              `;
+            }).join("")}</div>`
+          : ""
+      }
+    `;
+
+    this._themeSwitchEl.querySelector(".theme-menu-button")?.addEventListener("click", () => {
+      this._themeMenuOpen = !this._themeMenuOpen;
+      this._renderThemeSwitch();
+    });
 
     this._themeSwitchEl.querySelectorAll("[data-theme]").forEach((button) => {
       button.addEventListener("click", () => {
-        this._activeTheme = this._resolveThemeKey(button.dataset.theme);
+        this._activeTheme = this._resolveThemeChoice(button.dataset.theme);
+        this._themeMenuOpen = false;
         this._updateCard();
       });
     });
+  }
+
+  _ensureMapView(center) {
+    if (!this._viewCenter) {
+      this._viewCenter = {
+        latitude: center.latitude,
+        longitude: center.longitude,
+      };
+    }
+    if (!Number.isFinite(this._viewZoom)) {
+      this._viewZoom = clamp(
+        Math.round(toNumber(this._config?.zoom) || 10),
+        MIN_MAP_ZOOM,
+        MAX_MAP_ZOOM,
+      );
+    }
+  }
+
+  _scheduleMapRender() {
+    if (this._mapRenderFrame || !this._lastMapContext) {
+      return;
+    }
+
+    this._mapRenderFrame = window.requestAnimationFrame(() => {
+      this._mapRenderFrame = null;
+      const { center, flights, selectedFlight } = this._lastMapContext;
+      this._renderMap(center, flights, selectedFlight);
+      this._openLinkEl.href = this._buildOpenUrl(this._viewCenter || center, selectedFlight);
+    });
+  }
+
+  _mapPointFromClient(clientX, clientY) {
+    const rect = this._mapEl.getBoundingClientRect();
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  _panViewBy(deltaX, deltaY) {
+    if (!this._viewCenter || !Number.isFinite(this._viewZoom)) {
+      return;
+    }
+
+    const centerPoint = project(
+      this._viewCenter.latitude,
+      this._viewCenter.longitude,
+      this._viewZoom,
+    );
+    this._viewCenter = unproject(
+      centerPoint.x - deltaX,
+      centerPoint.y - deltaY,
+      this._viewZoom,
+    );
+    this._scheduleMapRender();
+  }
+
+  _zoomViewAt(nextZoom, clientX, clientY) {
+    if (!this._viewCenter || !Number.isFinite(this._viewZoom)) {
+      return;
+    }
+
+    const zoom = clamp(Math.round(nextZoom), MIN_MAP_ZOOM, MAX_MAP_ZOOM);
+    if (zoom === this._viewZoom) {
+      return;
+    }
+
+    const point = this._mapPointFromClient(clientX, clientY);
+    const offsetX = point.x - point.width / 2;
+    const offsetY = point.y - point.height / 2;
+    const oldCenter = project(
+      this._viewCenter.latitude,
+      this._viewCenter.longitude,
+      this._viewZoom,
+    );
+    const scale = 2 ** (zoom - this._viewZoom);
+    const anchorX = (oldCenter.x + offsetX) * scale;
+    const anchorY = (oldCenter.y + offsetY) * scale;
+
+    this._viewZoom = zoom;
+    this._viewCenter = unproject(anchorX - offsetX, anchorY - offsetY, zoom);
+    this._scheduleMapRender();
+  }
+
+  _bindMapInteractions() {
+    this._mapEl.addEventListener("wheel", (event) => {
+      if (this._config?.interactive_map === false) {
+        return;
+      }
+      event.preventDefault();
+      const delta = event.deltaY < 0 ? 1 : -1;
+      this._zoomViewAt(this._viewZoom + delta, event.clientX, event.clientY);
+    }, { passive: false });
+
+    this._mapEl.addEventListener("click", (event) => {
+      const control = event.target.closest?.("[data-map-control]");
+      if (!control || this._config?.interactive_map === false) {
+        return;
+      }
+      event.preventDefault();
+      const rect = this._mapEl.getBoundingClientRect();
+      const delta = control.dataset.mapControl === "zoom-in" ? 1 : -1;
+      this._zoomViewAt(
+        this._viewZoom + delta,
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      );
+    });
+
+    this._mapEl.addEventListener("pointerdown", (event) => {
+      if (
+        this._config?.interactive_map === false ||
+        event.button !== 0 ||
+        event.target.closest?.("button, a")
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      this._activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      this._mapEl.setPointerCapture?.(event.pointerId);
+      this._mapEl.classList.add("dragging");
+
+      if (this._activePointers.size === 1) {
+        this._dragState = {
+          x: event.clientX,
+          y: event.clientY,
+          center: project(
+            this._viewCenter.latitude,
+            this._viewCenter.longitude,
+            this._viewZoom,
+          ),
+        };
+      } else if (this._activePointers.size >= 2) {
+        const [first, second] = [...this._activePointers.values()];
+        this._pinchState = {
+          distance: Math.hypot(second.x - first.x, second.y - first.y),
+          midpoint: {
+            x: (first.x + second.x) / 2,
+            y: (first.y + second.y) / 2,
+          },
+        };
+        this._dragState = null;
+      }
+    });
+
+    this._mapEl.addEventListener("pointermove", (event) => {
+      if (!this._activePointers.has(event.pointerId)) {
+        return;
+      }
+
+      event.preventDefault();
+      this._activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (this._activePointers.size >= 2) {
+        const [first, second] = [...this._activePointers.values()];
+        const distance = Math.hypot(second.x - first.x, second.y - first.y);
+        const midpoint = {
+          x: (first.x + second.x) / 2,
+          y: (first.y + second.y) / 2,
+        };
+
+        if (this._pinchState) {
+          this._panViewBy(
+            midpoint.x - this._pinchState.midpoint.x,
+            midpoint.y - this._pinchState.midpoint.y,
+          );
+          const ratio = distance / Math.max(this._pinchState.distance, 1);
+          if (ratio > 1.22) {
+            this._zoomViewAt(this._viewZoom + 1, midpoint.x, midpoint.y);
+            this._pinchState.distance = distance;
+          } else if (ratio < 0.82) {
+            this._zoomViewAt(this._viewZoom - 1, midpoint.x, midpoint.y);
+            this._pinchState.distance = distance;
+          }
+          this._pinchState.midpoint = midpoint;
+        }
+        return;
+      }
+
+      if (this._dragState) {
+        const deltaX = event.clientX - this._dragState.x;
+        const deltaY = event.clientY - this._dragState.y;
+        this._viewCenter = unproject(
+          this._dragState.center.x - deltaX,
+          this._dragState.center.y - deltaY,
+          this._viewZoom,
+        );
+        this._scheduleMapRender();
+      }
+    });
+
+    const endPointer = (event) => {
+      if (!this._activePointers.has(event.pointerId)) {
+        return;
+      }
+      this._activePointers.delete(event.pointerId);
+      this._mapEl.releasePointerCapture?.(event.pointerId);
+      this._pinchState = null;
+
+      if (this._activePointers.size === 1) {
+        const remaining = [...this._activePointers.values()][0];
+        this._dragState = {
+          x: remaining.x,
+          y: remaining.y,
+          center: project(
+            this._viewCenter.latitude,
+            this._viewCenter.longitude,
+            this._viewZoom,
+          ),
+        };
+      } else {
+        this._dragState = null;
+        this._mapEl.classList.remove("dragging");
+      }
+    };
+
+    this._mapEl.addEventListener("pointerup", endPointer);
+    this._mapEl.addEventListener("pointercancel", endPointer);
   }
 
   _normalizeFlights(entity) {
@@ -763,6 +1179,57 @@ class HaNearbyFlightsCard extends HTMLElement {
       skipped,
       total: rawFlights.length,
     };
+  }
+
+  _getUpdatedTimestamp(entity) {
+    const attributes = entity?.attributes || {};
+    const candidates = [
+      attributes.last_update,
+      attributes.last_updated,
+      attributes.updated_at,
+      entity?.last_updated,
+      entity?.last_changed,
+    ];
+
+    for (const candidate of candidates) {
+      const parsed = parseTimestamp(candidate);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  _renderFreshnessStatus() {
+    if (!this._lastStatusContext || !this._metaEl) {
+      return;
+    }
+
+    const { entity, normalized } = this._lastStatusContext;
+    const updatedAt = this._getUpdatedTimestamp(entity);
+    const ageMs = updatedAt === null ? null : Math.max(0, Date.now() - updatedAt);
+    const staleAfterMinutes = Math.max(
+      toNumber(this._config?.stale_after_minutes) || 5,
+      1,
+    );
+    const unavailable = ["unavailable", "unknown"].includes(String(entity?.state));
+    const stale = unavailable || ageMs === null || ageMs > staleAfterMinutes * 60 * 1000;
+    const freshnessLabel = unavailable
+      ? "Source unavailable"
+      : ageMs === null
+        ? "Update time unknown"
+        : `${stale ? "Stale: " : "Updated "}${formatAge(ageMs)}`;
+    const skippedLabel = normalized.skipped > 0
+      ? ` (${normalized.skipped} without coordinates)`
+      : "";
+
+    this._metaEl.innerHTML = `
+      <span>${normalized.flights.length} aircraft${escapeHtml(skippedLabel)}</span>
+      <span class="freshness ${stale ? "stale" : ""}">
+        <span class="freshness-dot"></span>
+        ${escapeHtml(freshnessLabel)}
+      </span>
+    `;
   }
 
   _getConfiguredCenter() {
@@ -859,7 +1326,13 @@ class HaNearbyFlightsCard extends HTMLElement {
     const template = String(this._config.open_url || DEFAULT_OPEN_URL);
     const latitude = center.latitude.toFixed(5);
     const longitude = center.longitude.toFixed(5);
-    const zoom = String(clamp(Math.round(toNumber(this._config.zoom) || 10), 2, 16));
+    const zoom = String(
+      clamp(
+        Math.round(this._viewZoom ?? toNumber(this._config.zoom) ?? 10),
+        MIN_MAP_ZOOM,
+        MAX_MAP_ZOOM,
+      ),
+    );
 
     return template
       .replaceAll("{lat}", latitude)
@@ -880,16 +1353,20 @@ class HaNearbyFlightsCard extends HTMLElement {
   }
 
   _renderMap(center, flights, selectedFlight) {
+    this._ensureMapView(center);
     const width = Math.max(this._mapSize.width || 0, 320);
     const height = Math.max(Math.round(toNumber(this._config.height) || 440), 220);
-    const zoom = clamp(Math.round(toNumber(this._config.zoom) || 10), 2, 16);
+    const zoom = this._viewZoom;
+    const mapCenter = this._viewCenter;
     const maxFlights = clamp(Math.round(toNumber(this._config.max_flights) || 60), 1, 500);
     const visibleFlights = flights.slice(0, maxFlights);
     const tileSource = this._getTileSource();
 
     this._mapEl.style.height = `${height}px`;
+    this._mapEl.style.cursor = this._config.interactive_map === false ? "default" : "grab";
+    this._mapEl.style.touchAction = this._config.interactive_map === false ? "auto" : "none";
 
-    const centerPoint = project(center.latitude, center.longitude, zoom);
+    const centerPoint = project(mapCenter.latitude, mapCenter.longitude, zoom);
     const startX = centerPoint.x - width / 2;
     const startY = centerPoint.y - height / 2;
     const endX = centerPoint.x + width / 2;
@@ -932,7 +1409,7 @@ class HaNearbyFlightsCard extends HTMLElement {
 
     const markers = visibleFlights
       .map((flight) => {
-        const point = this._markerPoint(flight.latitude, flight.longitude, center, zoom, width, height);
+        const point = this._markerPoint(flight.latitude, flight.longitude, mapCenter, zoom, width, height);
         const inBounds =
           point.left >= -28 &&
           point.left <= width + 28 &&
@@ -975,7 +1452,7 @@ class HaNearbyFlightsCard extends HTMLElement {
             const homePoint = this._markerPoint(
               configuredCenter.latitude,
               configuredCenter.longitude,
-              center,
+              mapCenter,
               zoom,
               width,
               height,
@@ -1029,6 +1506,16 @@ class HaNearbyFlightsCard extends HTMLElement {
         ${markers}
       </div>
       ${emptyState}
+      ${
+        this._config.interactive_map === false
+          ? ""
+          : `
+            <div class="map-controls">
+              <button class="map-control" type="button" data-map-control="zoom-in" aria-label="Zoom in">+</button>
+              <button class="map-control" type="button" data-map-control="zoom-out" aria-label="Zoom out">-</button>
+            </div>
+          `
+      }
       <div class="${footerClasses.join(" ")}">
         ${showCenterLabel ? `<div class="pill center-pill">${escapeHtml(centerLabel)}</div>` : ""}
         <div class="pill attribution-pill" title="${attribution}">${attribution}</div>
@@ -1038,6 +1525,15 @@ class HaNearbyFlightsCard extends HTMLElement {
     this._mapEl.querySelectorAll("[data-flight-id]").forEach((button) => {
       button.addEventListener("click", () => {
         this._selectedFlightId = button.dataset.flightId || null;
+        if (this._config.follow_selected) {
+          const flight = flights.find((item) => item.id === this._selectedFlightId);
+          if (flight) {
+            this._viewCenter = {
+              latitude: flight.latitude,
+              longitude: flight.longitude,
+            };
+          }
+        }
         this._updateCard();
       });
     });
@@ -1078,6 +1574,7 @@ class HaNearbyFlightsCard extends HTMLElement {
       selectedFlight?.airline_name,
       selectedFlight?.aircraft_model,
       selectedFlight?.callsign,
+      selectedFlight?.aircraft_registration,
     ].filter(Boolean);
 
     const selectedMarkup = selectedFlight
@@ -1086,10 +1583,6 @@ class HaNearbyFlightsCard extends HTMLElement {
           <div class="selected-title">${escapeHtml(selectedFlight.title)}</div>
           <div class="selected-subtitle">${escapeHtml(selectedSubtitleParts.join(" | ") || "Nearby aircraft")}</div>
           <div class="field-grid">
-            <div>
-              <div class="field-label">Registration</div>
-              <div class="field-value">${escapeHtml(selectedFlight.aircraft_registration || "Unknown")}</div>
-            </div>
             <div>
               <div class="field-label">Altitude</div>
               <div class="field-value">${selectedFlight.on_ground ? "Ground" : formatValue(selectedFlight.altitude, " ft")}</div>
@@ -1107,16 +1600,8 @@ class HaNearbyFlightsCard extends HTMLElement {
               <div class="field-value">${formatDistanceNm(selectedDistance)}</div>
             </div>
             <div>
-              <div class="field-label">Coordinates</div>
-              <div class="field-value">${formatCoordinate(selectedFlight.latitude)}, ${formatCoordinate(selectedFlight.longitude)}</div>
-            </div>
-            <div>
-              <div class="field-label">From</div>
-              <div class="field-value">${escapeHtml(selectedFlight.airport_origin_name || "Unknown")}</div>
-            </div>
-            <div>
-              <div class="field-label">To</div>
-              <div class="field-value">${escapeHtml(selectedFlight.airport_destination_name || "Unknown")}</div>
+              <div class="field-label">Route</div>
+              <div class="field-value">${escapeHtml(selectedFlight.airport_origin_name || "Unknown")} to ${escapeHtml(selectedFlight.airport_destination_name || "Unknown")}</div>
             </div>
           </div>
         </div>
@@ -1162,14 +1647,37 @@ class HaNearbyFlightsCard extends HTMLElement {
       })
       .join("");
 
+    const toggleMarkup = flights.length > 1
+      ? `
+        <button class="details-toggle" type="button" data-details-toggle>
+          ${this._detailsExpanded ? "Hide flight list" : `Show all ${flights.length} flights`}
+        </button>
+      `
+      : "";
+
     this._detailsEl.innerHTML = `
       ${selectedMarkup}
-      <div class="flight-list">${listMarkup}</div>
+      ${toggleMarkup}
+      ${this._detailsExpanded ? `<div class="flight-list">${listMarkup}</div>` : ""}
     `;
+
+    this._detailsEl.querySelector("[data-details-toggle]")?.addEventListener("click", () => {
+      this._detailsExpanded = !this._detailsExpanded;
+      this._renderDetails(flights, selectedFlight, center);
+    });
 
     this._detailsEl.querySelectorAll("[data-flight-id]").forEach((button) => {
       button.addEventListener("click", () => {
         this._selectedFlightId = button.dataset.flightId || null;
+        if (this._config.follow_selected) {
+          const flight = flights.find((item) => item.id === this._selectedFlightId);
+          if (flight) {
+            this._viewCenter = {
+              latitude: flight.latitude,
+              longitude: flight.longitude,
+            };
+          }
+        }
         this._updateCard();
       });
     });
@@ -1183,6 +1691,7 @@ class HaNearbyFlightsCard extends HTMLElement {
     const entity = this._getEntityState();
 
     if (!entity) {
+      this._lastStatusContext = null;
       this._titleEl.textContent = this._config.title || DEFAULT_TITLE;
       this._metaEl.textContent = `Entity not found: ${this._config.entity || DEFAULT_ENTITY}`;
       this._renderThemeSwitch();
@@ -1191,6 +1700,7 @@ class HaNearbyFlightsCard extends HTMLElement {
         .replaceAll("{lon}", "-98.35000")
         .replaceAll("{zoom}", String(this._config.zoom || 10));
       this._mapEl.style.height = `${Math.max(Math.round(toNumber(this._config.height) || 440), 220)}px`;
+      this._mapEl.style.touchAction = "auto";
       this._mapEl.innerHTML = `
         <div class="map-empty">
           Set the card entity to a Flightradar24 sensor with a flights attribute.
@@ -1204,26 +1714,279 @@ class HaNearbyFlightsCard extends HTMLElement {
     const normalized = this._normalizeFlights(entity);
     const selectedFlight = this._pickSelectedFlight(normalized.flights);
     const center = this._deriveCenter(normalized.flights, selectedFlight);
-    const openUrl = this._buildOpenUrl(center, selectedFlight);
-    const tileSource = this._getTileSource();
+    this._ensureMapView(center);
+    const openUrl = this._buildOpenUrl(this._viewCenter || center, selectedFlight);
 
     this._titleEl.textContent =
       this._config.title || entity.attributes.friendly_name || DEFAULT_TITLE;
 
-    const baseMeta = `${normalized.flights.length} aircraft on map`;
-    const skippedMeta =
-      normalized.skipped > 0 ? `, ${normalized.skipped} skipped without coordinates` : "";
-    const themeMeta = tileSource.key === "custom"
-      ? ", custom map tiles"
-      : `, ${tileSource.label.toLowerCase()} theme`;
-    this._metaEl.textContent = `${baseMeta}${skippedMeta}${themeMeta}`;
+    this._lastStatusContext = { entity, normalized };
+    this._renderFreshnessStatus();
     this._openLinkEl.href = openUrl;
     this._renderThemeSwitch();
 
+    this._lastMapContext = {
+      center,
+      flights: normalized.flights,
+      selectedFlight,
+    };
     this._renderMap(center, normalized.flights, selectedFlight);
     this._renderDetails(normalized.flights, selectedFlight, center);
     this._errorEl.textContent = "";
   }
+}
+
+class HaNearbyFlightsCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this.attachShadow({ mode: "open" });
+    this._config = {};
+    this._hass = null;
+  }
+
+  set hass(hass) {
+    const needsInitialRender = !this._hass;
+    this._hass = hass;
+    if (needsInitialRender) {
+      this._render();
+    }
+  }
+
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  _getValue(name, fallback) {
+    return Object.hasOwn(this._config, name) ? this._config[name] : fallback;
+  }
+
+  _getEntityOptions() {
+    const candidates = Object.entries(this._hass?.states || {})
+      .filter(([entityId, state]) =>
+        entityId.startsWith("sensor.") &&
+        (entityId.includes("flightradar24") || Array.isArray(state.attributes?.flights)))
+      .map(([entityId, state]) => ({
+        entityId,
+        name: state.attributes?.friendly_name || entityId,
+      }));
+
+    if (!candidates.some(({ entityId }) => entityId === DEFAULT_ENTITY)) {
+      candidates.push({ entityId: DEFAULT_ENTITY, name: DEFAULT_ENTITY });
+    }
+
+    return candidates.sort((left, right) => left.name.localeCompare(right.name));
+  }
+
+  _updateConfig(name, value) {
+    const config = { ...this._config };
+    if (value === null || value === undefined || value === "") {
+      delete config[name];
+    } else {
+      config[name] = value;
+    }
+
+    this._config = config;
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+
+  _render() {
+    const entityOptions = this._getEntityOptions()
+      .map(({ entityId, name }) =>
+        `<option value="${escapeHtml(entityId)}">${escapeHtml(name)}</option>`)
+      .join("");
+    const checked = (name, fallback) => this._getValue(name, fallback) ? "checked" : "";
+
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host {
+          display: block;
+          color: var(--primary-text-color);
+        }
+
+        .editor {
+          display: grid;
+          gap: 18px;
+          padding: 8px 0;
+        }
+
+        .section {
+          display: grid;
+          gap: 12px;
+        }
+
+        .section-title {
+          color: var(--secondary-text-color);
+          font-size: 0.76rem;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+
+        .field-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        label.field {
+          display: grid;
+          gap: 6px;
+          color: var(--secondary-text-color);
+          font-size: 0.82rem;
+        }
+
+        input,
+        select {
+          box-sizing: border-box;
+          width: 100%;
+          min-height: 42px;
+          padding: 9px 11px;
+          border: 1px solid var(--divider-color);
+          border-radius: 8px;
+          outline: none;
+          background: var(--card-background-color);
+          color: var(--primary-text-color);
+          font: inherit;
+        }
+
+        input:focus,
+        select:focus {
+          border-color: var(--primary-color);
+          box-shadow: 0 0 0 1px var(--primary-color);
+        }
+
+        .toggles {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 6px 16px;
+        }
+
+        .toggle {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          min-height: 34px;
+          font-size: 0.9rem;
+        }
+
+        .toggle input {
+          width: 18px;
+          min-height: 18px;
+          margin: 0;
+          accent-color: var(--primary-color);
+        }
+
+        @media (max-width: 520px) {
+          .field-grid,
+          .toggles {
+            grid-template-columns: 1fr;
+          }
+        }
+      </style>
+      <div class="editor">
+        <section class="section">
+          <div class="section-title">Source</div>
+          <label class="field">
+            Flight sensor
+            <input
+              type="text"
+              list="flight-sensor-options"
+              data-config="entity"
+              value="${escapeHtml(this._getValue("entity", DEFAULT_ENTITY))}"
+              placeholder="${DEFAULT_ENTITY}"
+            >
+          </label>
+          <datalist id="flight-sensor-options">${entityOptions}</datalist>
+          <label class="field">
+            Card title
+            <input
+              type="text"
+              data-config="title"
+              value="${escapeHtml(this._getValue("title", DEFAULT_TITLE))}"
+              placeholder="${DEFAULT_TITLE}"
+            >
+          </label>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Map</div>
+          <div class="field-grid">
+            <label class="field">
+              Default theme
+              <select data-config="map_theme">
+                ${THEME_CHOICES.map((choice) => `
+                  <option value="${choice}" ${this._resolveThemeChoice(this._getValue("map_theme", "auto")) === choice ? "selected" : ""}>
+                    ${choice.charAt(0).toUpperCase()}${choice.slice(1)}
+                  </option>
+                `).join("")}
+              </select>
+            </label>
+            <label class="field">
+              Starting zoom
+              <input type="number" min="${MIN_MAP_ZOOM}" max="${MAX_MAP_ZOOM}" step="1" data-config="zoom" value="${escapeHtml(this._getValue("zoom", 10))}">
+            </label>
+            <label class="field">
+              Map height (px)
+              <input type="number" min="220" step="10" data-config="height" value="${escapeHtml(this._getValue("height", 440))}">
+            </label>
+            <label class="field">
+              Maximum flights
+              <input type="number" min="1" max="500" step="1" data-config="max_flights" value="${escapeHtml(this._getValue("max_flights", 60))}">
+            </label>
+            <label class="field">
+              Stale after (minutes)
+              <input type="number" min="1" step="1" data-config="stale_after_minutes" value="${escapeHtml(this._getValue("stale_after_minutes", 5))}">
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-title">Display</div>
+          <div class="toggles">
+            <label class="toggle"><input type="checkbox" data-config="interactive_map" ${checked("interactive_map", true)}>Interactive map</label>
+            <label class="toggle"><input type="checkbox" data-config="show_theme_toggle" ${checked("show_theme_toggle", true)}>Theme menu</label>
+            <label class="toggle"><input type="checkbox" data-config="show_home" ${checked("show_home", true)}>Home marker</label>
+            <label class="toggle"><input type="checkbox" data-config="show_list" ${checked("show_list", true)}>Flight details</label>
+            <label class="toggle"><input type="checkbox" data-config="details_expanded" ${checked("details_expanded", false)}>Expand flight list</label>
+            <label class="toggle"><input type="checkbox" data-config="follow_selected" ${checked("follow_selected", false)}>Follow selected flight</label>
+            <label class="toggle"><input type="checkbox" data-config="show_center_label" ${checked("show_center_label", false)}>Center label</label>
+            <label class="toggle"><input type="checkbox" data-config="compact_footer" ${checked("compact_footer", true)}>Compact attribution</label>
+          </div>
+        </section>
+      </div>
+    `;
+
+    this.shadowRoot.querySelectorAll("[data-config]").forEach((input) => {
+      input.addEventListener("change", () => {
+        let value = input.value;
+        if (input.type === "checkbox") {
+          value = input.checked;
+        } else if (input.type === "number") {
+          value = input.value === "" ? null : Number(input.value);
+        } else {
+          value = input.value.trim();
+        }
+        this._updateConfig(input.dataset.config, value);
+      });
+    });
+  }
+
+  _resolveThemeChoice(theme) {
+    const choice = String(theme || "auto").toLowerCase();
+    if (choice === "standard") {
+      return "light";
+    }
+    return THEME_CHOICES.includes(choice) ? choice : "auto";
+  }
+}
+
+if (!customElements.get("ha-nearby-flights-card-editor")) {
+  customElements.define("ha-nearby-flights-card-editor", HaNearbyFlightsCardEditor);
 }
 
 if (!customElements.get("ha-nearby-flights-card")) {

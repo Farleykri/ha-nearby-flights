@@ -2,7 +2,7 @@
 
 `ha-nearby-flights` is a HACS dashboard/plugin repository for a Lovelace card that works with the existing [home-assistant-flightradar24](https://github.com/AlexandrErohin/home-assistant-flightradar24) integration.
 
-It reads the `flights` attribute from `sensor.flightradar24_current_in_area` and plots nearby aircraft on a map with a selectable details list.
+It reads the `flights` attribute from `sensor.flightradar24_current_in_area` and plots nearby aircraft on an interactive map with compact selected-flight details.
 
 ## What it needs
 
@@ -42,33 +42,44 @@ height: 460
 zoom: 10
 show_home: true
 show_list: true
+map_theme: auto
+interactive_map: true
+details_expanded: false
+stale_after_minutes: 5
 ```
+
+The card also includes a visual editor, so these settings can be changed from the Home Assistant dashboard editor without writing YAML.
 
 ## Card options
 
 - `entity`: Flightradar24 area sensor, defaults to `sensor.flightradar24_current_in_area`
 - `title`: card title
 - `height`: map height in pixels
-- `zoom`: slippy-map zoom level
+- `zoom`: initial slippy-map zoom level, from `2` to `16`
 - `latitude`: optional map center latitude override
 - `longitude`: optional map center longitude override
 - `max_flights`: maximum number of aircraft markers to render
 - `focus_id`: optional initial flight identifier to select
-- `map_theme`: built-in map style preset: `standard`, `light`, `dark`, or `satellite`
-- `show_theme_toggle`: show map-style buttons in the card header
+- `map_theme`: built-in map style preset: `auto`, `light`, `dark`, or `satellite`; `auto` follows Home Assistant's light/dark mode
+- `show_theme_toggle`: show the compact map-style menu in the card header
+- `interactive_map`: enable drag panning, wheel/pinch zoom, and the `+`/`-` controls
+- `stale_after_minutes`: age in minutes before the update indicator is marked stale
 - `show_center_label`: show the "centered on..." footer label
 - `compact_footer`: use the smaller low-profile footer style
 - `show_home`: show a home marker using the Home Assistant location when available
-- `show_list`: show the selectable aircraft list below the map
+- `show_list`: show selected-flight details below the map
+- `details_expanded`: show the full selectable aircraft list initially; otherwise it remains behind a compact expand button
 - `follow_selected`: center the map on the selected aircraft instead of the home area
-- `tile_url`: optional tile URL template, defaults to `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png`
+- `tile_url`: optional custom tile URL template; when omitted, `map_theme` selects the built-in tile source
 - `tile_attribution`: attribution text shown on the map
 - `open_url`: optional external map URL template. Supported placeholders are `{lat}`, `{lon}`, `{zoom}`, `{flight_number}`, `{callsign}`, and `{registration}`
 
 ## Notes
 
-- The default map tiles now use the same CARTO Voyager raster basemap pattern Home Assistant's own frontend map code uses.
-- Built-in `light`, `dark`, and `satellite` themes are available when you are not overriding `tile_url`.
+- `auto` follows Home Assistant's current light or dark mode. `satellite` remains a manual choice in the compact layer menu.
+- The map supports mouse or touch dragging, mouse-wheel or pinch zoom, and compact `+`/`-` controls.
+- The header shows when flight data was last updated and marks it stale after the configured threshold.
+- Selected-flight details stay compact by default, with the full list available through the expand button.
 - Built-in `light` and `dark` use CARTO raster tiles, and `satellite` uses Esri World Imagery, so keep the visible attribution in place.
 - The "centered on..." footer label is hidden by default now, and the attribution chip uses a smaller compact footer style by default.
 - If you set `tile_url`, it takes priority over `map_theme` and the theme toggle is hidden.
