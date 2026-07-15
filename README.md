@@ -45,6 +45,7 @@ show_list: true
 map_theme: auto
 interactive_map: true
 details_expanded: false
+details_timeout: 15
 stale_after_minutes: 5
 ```
 
@@ -69,6 +70,7 @@ The card also includes a visual editor, so these settings can be changed from th
 - `show_home`: show a home marker using the Home Assistant location when available
 - `show_list`: show selected-flight details below the map
 - `details_expanded`: show the full selectable aircraft list initially; otherwise it remains behind a compact expand button
+- `details_timeout`: seconds to show details after selecting an aircraft; use `0` to keep details visible at all times
 - `follow_selected`: center the map on the selected aircraft instead of the home area
 - `tile_url`: optional custom tile URL template; when omitted, `map_theme` selects the built-in tile source
 - `tile_attribution`: attribution text shown on the map
@@ -80,6 +82,7 @@ The card also includes a visual editor, so these settings can be changed from th
 - The map supports mouse or touch dragging, mouse-wheel or pinch zoom, and compact `+`/`-` controls.
 - The header shows when flight data was last updated and marks it stale after the configured threshold.
 - Selected-flight details stay compact by default, with the full list available through the expand button.
+- With a positive `details_timeout`, the details area stays hidden until an aircraft is selected and automatically disappears when the timer expires.
 - Built-in `light` and `dark` use CARTO raster tiles, and `satellite` uses Esri World Imagery, so keep the visible attribution in place.
 - The "centered on..." footer label is hidden by default now, and the attribution chip uses a smaller compact footer style by default.
 - If you set `tile_url`, it takes priority over `map_theme` and the theme toggle is hidden.

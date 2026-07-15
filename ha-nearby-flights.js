@@ -210,6 +210,8 @@ class HaNearbyFlightsCard extends HTMLElement {
     this._activeTheme = "auto";
     this._themeMenuOpen = false;
     this._detailsExpanded = false;
+    this._detailsVisible = true;
+    this._detailsHideTimer = null;
     this._selectedFlightId = null;
     this._viewCenter = null;
     this._viewZoom = null;
@@ -219,6 +221,7 @@ class HaNearbyFlightsCard extends HTMLElement {
     this._mapRenderFrame = null;
     this._lastMapContext = null;
     this._lastStatusContext = null;
+    this._lastDetailsContext = null;
     this._statusTimer = null;
     this._mapSize = { width: 0, height: 0 };
     this._resizeObserver = new ResizeObserver((entries) => {
@@ -255,6 +258,8 @@ class HaNearbyFlightsCard extends HTMLElement {
       window.cancelAnimationFrame(this._mapRenderFrame);
       this._mapRenderFrame = null;
     }
+    this._clearDetailsHideTimer();
+    this._detailsVisible = this._getDetailsTimeoutSeconds() === 0;
   }
 
   static getConfigElement() {
@@ -278,6 +283,7 @@ class HaNearbyFlightsCard extends HTMLElement {
       show_theme_toggle: true,
       interactive_map: true,
       details_expanded: false,
+      details_timeout: 0,
       stale_after_minutes: 5,
       show_center_label: false,
       compact_footer: true,
@@ -289,11 +295,14 @@ class HaNearbyFlightsCard extends HTMLElement {
       open_url: DEFAULT_OPEN_URL,
       ...config,
     };
+    this._clearDetailsHideTimer();
     this._activeTheme = this._resolveThemeChoice(this._config.map_theme);
     this._detailsExpanded = this._config.details_expanded === true;
+    this._detailsVisible = this._getDetailsTimeoutSeconds() === 0;
     this._viewCenter = null;
     this._viewZoom = null;
     this._lastMapContext = null;
+    this._lastDetailsContext = null;
 
     this._updateCard();
   }
@@ -304,7 +313,7 @@ class HaNearbyFlightsCard extends HTMLElement {
   }
 
   getCardSize() {
-    if (this._config?.show_list === false) {
+    if (this._config?.show_list === false || !this._detailsVisible) {
       return 7;
     }
     return this._detailsExpanded ? 10 : 8;
@@ -1524,23 +1533,68 @@ class HaNearbyFlightsCard extends HTMLElement {
 
     this._mapEl.querySelectorAll("[data-flight-id]").forEach((button) => {
       button.addEventListener("click", () => {
-        this._selectedFlightId = button.dataset.flightId || null;
-        if (this._config.follow_selected) {
-          const flight = flights.find((item) => item.id === this._selectedFlightId);
-          if (flight) {
-            this._viewCenter = {
-              latitude: flight.latitude,
-              longitude: flight.longitude,
-            };
-          }
-        }
-        this._updateCard();
+        this._selectFlight(button.dataset.flightId, flights);
       });
     });
   }
 
+  _getDetailsTimeoutSeconds() {
+    const configured = toNumber(this._config?.details_timeout);
+    return configured === null ? 0 : Math.max(0, configured);
+  }
+
+  _clearDetailsHideTimer() {
+    if (this._detailsHideTimer !== null) {
+      window.clearTimeout(this._detailsHideTimer);
+      this._detailsHideTimer = null;
+    }
+  }
+
+  _showDetailsForConfiguredDuration() {
+    this._clearDetailsHideTimer();
+    this._detailsVisible = true;
+
+    const timeoutSeconds = this._getDetailsTimeoutSeconds();
+    if (timeoutSeconds === 0) {
+      return;
+    }
+
+    this._detailsHideTimer = window.setTimeout(() => {
+      this._detailsHideTimer = null;
+      this._detailsVisible = false;
+      this._detailsExpanded = this._config.details_expanded === true;
+
+      if (this._lastDetailsContext) {
+        const { flights, selectedFlight, center } = this._lastDetailsContext;
+        this._renderDetails(flights, selectedFlight, center);
+      } else if (this._detailsEl) {
+        this._detailsEl.innerHTML = "";
+      }
+    }, timeoutSeconds * 1000);
+  }
+
+  _selectFlight(flightId, flights) {
+    if (!hasValue(flightId)) {
+      return;
+    }
+
+    this._selectedFlightId = String(flightId);
+    if (this._config.follow_selected) {
+      const flight = flights.find((item) => item.id === this._selectedFlightId);
+      if (flight) {
+        this._viewCenter = {
+          latitude: flight.latitude,
+          longitude: flight.longitude,
+        };
+      }
+    }
+
+    this._showDetailsForConfiguredDuration();
+    this._updateCard();
+  }
+
   _renderDetails(flights, selectedFlight, center) {
-    if (!this._config.show_list) {
+    if (!this._config.show_list || !this._detailsVisible) {
       this._detailsEl.innerHTML = "";
       return;
     }
@@ -1663,22 +1717,13 @@ class HaNearbyFlightsCard extends HTMLElement {
 
     this._detailsEl.querySelector("[data-details-toggle]")?.addEventListener("click", () => {
       this._detailsExpanded = !this._detailsExpanded;
+      this._showDetailsForConfiguredDuration();
       this._renderDetails(flights, selectedFlight, center);
     });
 
     this._detailsEl.querySelectorAll("[data-flight-id]").forEach((button) => {
       button.addEventListener("click", () => {
-        this._selectedFlightId = button.dataset.flightId || null;
-        if (this._config.follow_selected) {
-          const flight = flights.find((item) => item.id === this._selectedFlightId);
-          if (flight) {
-            this._viewCenter = {
-              latitude: flight.latitude,
-              longitude: flight.longitude,
-            };
-          }
-        }
-        this._updateCard();
+        this._selectFlight(button.dataset.flightId, flights);
       });
     });
   }
@@ -1692,6 +1737,7 @@ class HaNearbyFlightsCard extends HTMLElement {
 
     if (!entity) {
       this._lastStatusContext = null;
+      this._lastDetailsContext = null;
       this._titleEl.textContent = this._config.title || DEFAULT_TITLE;
       this._metaEl.textContent = `Entity not found: ${this._config.entity || DEFAULT_ENTITY}`;
       this._renderThemeSwitch();
@@ -1726,6 +1772,11 @@ class HaNearbyFlightsCard extends HTMLElement {
     this._renderThemeSwitch();
 
     this._lastMapContext = {
+      center,
+      flights: normalized.flights,
+      selectedFlight,
+    };
+    this._lastDetailsContext = {
       center,
       flights: normalized.flights,
       selectedFlight,
@@ -1840,6 +1891,12 @@ class HaNearbyFlightsCardEditor extends HTMLElement {
           font-size: 0.82rem;
         }
 
+        .field-hint {
+          color: var(--secondary-text-color);
+          font-size: 0.74rem;
+          line-height: 1.35;
+        }
+
         input,
         select {
           box-sizing: border-box;
@@ -1941,6 +1998,11 @@ class HaNearbyFlightsCardEditor extends HTMLElement {
             <label class="field">
               Stale after (minutes)
               <input type="number" min="1" step="1" data-config="stale_after_minutes" value="${escapeHtml(this._getValue("stale_after_minutes", 5))}">
+            </label>
+            <label class="field">
+              Hide details after (seconds)
+              <input type="number" min="0" step="1" data-config="details_timeout" value="${escapeHtml(this._getValue("details_timeout", 0))}">
+              <span class="field-hint">Use 0 to keep flight details visible.</span>
             </label>
           </div>
         </section>
