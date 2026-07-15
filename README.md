@@ -1,8 +1,13 @@
 # HA Nearby Flights Card
 
+[![HACS validation](https://github.com/Farleykri/ha-nearby-flights/actions/workflows/validate.yaml/badge.svg)](https://github.com/Farleykri/ha-nearby-flights/actions/workflows/validate.yaml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 `ha-nearby-flights` is a HACS dashboard/plugin repository for a Lovelace card that works with the existing [home-assistant-flightradar24](https://github.com/AlexandrErohin/home-assistant-flightradar24) integration.
 
 It reads the `flights` attribute from `sensor.flightradar24_current_in_area` and plots nearby aircraft on an interactive map with compact selected-flight details.
+
+![HA Nearby Flights Card showing nearby aircraft on a map](images/ha-nearby-flights-card.png)
 
 ## What it needs
 
@@ -27,10 +32,10 @@ The card is designed around flight data like:
 
 ## Installation
 
-1. Add this repository to HACS as a `Dashboard` repository.
-2. Install `HA Nearby Flights Card`.
-3. Ensure the Lovelace resource exists.
-4. If HACS does not register it automatically, add `/hacsfiles/ha-nearby-flights/ha-nearby-flights.js` as a `JavaScript Module`.
+1. Open HACS in Home Assistant and select `Dashboard`.
+2. Search for `HA Nearby Flights Card` and download it.
+3. If it is not yet available in the default catalog, add `https://github.com/Farleykri/ha-nearby-flights` as a custom `Dashboard` repository first.
+4. If HACS does not register the resource automatically, add `/hacsfiles/ha-nearby-flights/ha-nearby-flights.js` as a `JavaScript Module` under dashboard resources.
 
 ## Example card
 
